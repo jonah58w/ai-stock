@@ -1,10 +1,9 @@
 # app.py
-# AI Stock Trading Assistant（台股分析專業版 / 雲端優化版）
+# AI Stock Trading Assistant（台股分析專業版 / 雲端專用版）
+# ✅ 完全移除 TWSE/TPEx API 依賴
+# ✅ 僅使用 Yahoo Finance（雲端穩定）
 # ✅ 修正 KeyError: 訊號欄位
-# ✅ 優先使用 Yahoo Finance（雲端穩定）
 # ✅ 正確股票名稱對照
-# ✅ 符合現實的買賣點策略
-# ✅ 支撐壓力位自動識別
 
 from __future__ import annotations
 import numpy as np
@@ -19,12 +18,12 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # -----------------------------
-# 台股股票名稱對照表（已修正）
+# 台股股票名稱對照表
 # -----------------------------
 TW_STOCK_NAMES = {
     "2330": "台積電", "2317": "鴻海", "2454": "聯發科", "2308": "台達電",
     "2881": "富邦金", "2882": "國泰金", "1301": "台塑", "1303": "南亞",
-    "2603": "長榮", "2615": "萬海", "0050": "元大台灣 50", "0056": "元大高股息",
+    "2603": "長榮", "2615": "萬海", "0050": "元大台灣50", "0056": "元大高股息",
     "3008": "大立光", "3045": "台灣大", "2382": "廣達", "2303": "聯電",
     "2891": "中信金", "2892": "第一金", "2886": "兆豐金", "2885": "元大金",
     "2884": "玉山金", "2883": "開發金", "2880": "永豐金", "2889": "國票金",
@@ -45,7 +44,7 @@ TW_STOCK_NAMES = {
     "2934": "潤泰新", "2935": "潤泰全", "2936": "晶華", "2937": "王品",
     "2938": "雄獅", "2939": "凱撒", "2940": "美食", "2941": "八方雲集",
     "6274": "台燿", 
-    "2449": "京元電",  # ✅ 已修正
+    "2449": "京元電",
     "3711": "日月光投控", 
     "8046": "南電",
     "3163": "波若威"
@@ -87,7 +86,10 @@ def safe_series(x) -> pd.Series:
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def download_ohlc(symbol: str, period: str, interval: str) -> pd.DataFrame:
-    """雲端優化下載：優先 Yahoo Finance"""
+    """
+    雲端專用下載：僅使用 Yahoo Finance
+    完全移除 TWSE/TPEx API 依賴
+    """
     stock_no = symbol.replace(".TW", "").replace(".TWO", "")
     
     try:
@@ -115,12 +117,12 @@ def download_ohlc(symbol: str, period: str, interval: str) -> pd.DataFrame:
             else:
                 st.warning(f"⚠️ 欄位不完整：{list(df.columns)}")
         else:
-            st.warning("⚠️ 返回空資料")
+            st.warning("⚠️ Yahoo Finance 返回空資料")
     
     except Exception as e:
-        st.error(f"❌ 下載失敗：{str(e)[:100]}")
+        st.error(f"❌ Yahoo Finance 失敗：{str(e)[:100]}")
     
-    st.error("❌ 所有資料源都失敗，請稍後再試或更換股票")
+    st.error("❌ 下載失敗，請稍後再試或更換股票")
     return pd.DataFrame()
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -140,50 +142,18 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     atr = AverageTrueRange(high=high, low=low, close=close, window=14)
     df["ATR14"] = atr.average_true_range()
     
+    # MACD
     ema12 = EMAIndicator(close=close, window=12).ema_indicator()
     ema26 = EMAIndicator(close=close, window=26).ema_indicator()
     df["MACD"] = ema12 - ema26
     df["MACD_Signal"] = EMAIndicator(close=df["MACD"], window=9).ema_indicator()
     
+    # KD
     kd = StochasticOscillator(high=high, low=low, close=close, window=14)
     df["K"] = kd.stoch()
     df["D"] = df["K"].rolling(3).mean()
     
     return df
-
-def calculate_support_resistance(df: pd.DataFrame) -> dict:
-    """自動識別支撐壓力位"""
-    if df.empty or len(df) < 20:
-        return {}
-    
-    current_price = df["Close"].iloc[-1]
-    recent_high = df["High"].tail(20).max()
-    recent_low = df["Low"].tail(20).min()
-    
-    lookback = min(252, len(df))
-    high_52w = df["High"].tail(lookback).max()
-    low_52w = df["Low"].tail(lookback).min()
-    
-    bb_high = df["BB_High"].iloc[-1] if pd.notna(df["BB_High"].iloc[-1]) else None
-    bb_low = df["BB_Low"].iloc[-1] if pd.notna(df["BB_Low"].iloc[-1]) else None
-    
-    def calc_gap(price):
-        if price is None or pd.isna(price):
-            return None
-        return round((price - current_price) / current_price * 100, 2)
-    
-    return {
-        "壓力位": {
-            "近期高點": {"價": round(recent_high, 2), "差距": calc_gap(recent_high)},
-            "布林上軌": {"價": round(bb_high, 2) if bb_high else None, "差距": calc_gap(bb_high)},
-            "52 周高點": {"價": round(high_52w, 2), "差距": calc_gap(high_52w)},
-        },
-        "支撐位": {
-            "近期低點": {"價": round(recent_low, 2), "差距": calc_gap(recent_low)},
-            "布林下軌": {"價": round(bb_low, 2) if bb_low else None, "差距": calc_gap(bb_low)},
-            "52 周低點": {"價": round(low_52w, 2), "差距": calc_gap(low_52w)},
-        }
-    }
 
 def compute_signal_points(df: pd.DataFrame, cooldown_bars: int = 3) -> pd.DataFrame:
     """計算歷史買賣點（含冷卻期）"""
@@ -218,201 +188,6 @@ def compute_signal_points(df: pd.DataFrame, cooldown_bars: int = 3) -> pd.DataFr
             cooldown = cooldown_bars
     
     return pd.DataFrame(pts, columns=["Time", "Signal", "Price"])
-
-def estimate_future_buy_sell_points(df: pd.DataFrame, rr: float, atr_mult: float, support_resistance: dict) -> dict:
-    """預估未來買賣點（結合支撐壓力 + 突破策略）"""
-    if df.empty or len(df) < 30:
-        return {}
-    
-    last = df.iloc[-1]
-    close = float(last["Close"])
-    ema20 = float(last["EMA20"]) if pd.notna(last["EMA20"]) else np.nan
-    sma20 = float(last["SMA20"]) if pd.notna(last["SMA20"]) else np.nan
-    rsi = float(last["RSI14"]) if pd.notna(last["RSI14"]) else np.nan
-    atr = float(last["ATR14"]) if pd.notna(last["ATR14"]) else np.nan
-    macd = float(last["MACD"]) if pd.notna(last["MACD"]) else np.nan
-    macd_signal = float(last["MACD_Signal"]) if pd.notna(last["MACD_Signal"]) else np.nan
-    
-    ma5 = df["Close"].rolling(5).mean().iloc[-1]
-    ma10 = df["Close"].rolling(10).mean().iloc[-1]
-    ma20 = df["Close"].rolling(20).mean().iloc[-1]
-    recent_high = df["High"].tail(20).max()
-    
-    result = {
-        "current_price": close,
-        "future_buy_points": [],
-        "future_sell_points": []
-    }
-    
-    support_levels = support_resistance.get("支撐位", {})
-    resistance_levels = support_resistance.get("壓力位", {})
-    
-    nearest_resistance = None
-    for key, value in resistance_levels.items():
-        if value and value["價"] is not None and value["價"] > close:
-            if nearest_resistance is None or value["價"] < nearest_resistance:
-                nearest_resistance = value["價"]
-    
-    nearest_support = None
-    for key, value in support_levels.items():
-        if value and value["價"] is not None and value["價"] < close:
-            if nearest_support is None or value["價"] > nearest_support:
-                nearest_support = value["價"]
-    
-    # ===== 買點策略 =====
-    
-    # 策略 1：突破壓力買點
-    if nearest_resistance:
-        breakout_price = nearest_resistance * 1.01
-        if not np.isnan(atr) and atr > 0:
-            stop_loss = breakout_price - atr_mult * atr
-            take_profit = breakout_price + rr * (breakout_price - stop_loss)
-        else:
-            stop_loss = breakout_price * 0.95
-            take_profit = breakout_price * 1.10
-        
-        distance = (nearest_resistance - close) / close * 100
-        
-        result["future_buy_points"].append({
-            "情境": "🚀 突破壓力買點",
-            "預估買點": round(breakout_price, 2),
-            "停損": round(stop_loss, 2),
-            "停利": round(take_profit, 2),
-            "條件": f"價格突破 {round(nearest_resistance, 2)}（距離：{distance:+.1f}%）",
-            "優先級": "高" if distance < 10 else "中"
-        })
-    
-    # 策略 2：回檔支撐買點
-    if nearest_support:
-        pullback_price = nearest_support * 1.01
-        if not np.isnan(atr) and atr > 0:
-            stop_loss = pullback_price - atr_mult * atr
-            take_profit = pullback_price + rr * (pullback_price - stop_loss)
-        else:
-            stop_loss = pullback_price * 0.95
-            take_profit = pullback_price * 1.10
-        
-        distance = (nearest_support - close) / close * 100
-        
-        result["future_buy_points"].append({
-            "情境": "📉 回檔支撐買點",
-            "預估買點": round(pullback_price, 2),
-            "停損": round(stop_loss, 2),
-            "停利": round(take_profit, 2),
-            "條件": f"價格回測 {round(nearest_support, 2)}（距離：{distance:+.1f}%）",
-            "優先級": "高" if abs(distance) < 10 else "低"
-        })
-    
-    # 策略 3：均線多頭確認買點
-    if ma5 > ma10 > ma20:
-        ma_buy_price = close * 1.01
-        if not np.isnan(atr) and atr > 0:
-            stop_loss = ma_buy_price - atr_mult * atr
-            take_profit = ma_buy_price + rr * (ma_buy_price - stop_loss)
-        else:
-            stop_loss = ma_buy_price * 0.95
-            take_profit = ma_buy_price * 1.10
-        
-        result["future_buy_points"].append({
-            "情境": "📊 均線多頭確認買點",
-            "預估買點": round(ma_buy_price, 2),
-            "停損": round(stop_loss, 2),
-            "停利": round(take_profit, 2),
-            "條件": f"5/10/20 日均線多頭排列\nMACD: {round(macd, 2)} > 訊號線：{round(macd_signal, 2)}",
-            "優先級": "高"
-        })
-    
-    # ===== 賣點策略 =====
-    
-    # 策略 1：跌破支撐賣點
-    if nearest_support:
-        breakdown_price = nearest_support * 0.99
-        if not np.isnan(atr) and atr > 0:
-            stop_loss = breakdown_price + atr_mult * atr
-            take_profit = breakdown_price - rr * (stop_loss - breakdown_price)
-        else:
-            stop_loss = breakdown_price * 1.05
-            take_profit = breakdown_price * 0.90
-        
-        distance = (nearest_support - close) / close * 100
-        
-        result["future_sell_points"].append({
-            "情境": "🛑 跌破支撐賣點（停損）",
-            "預估賣點": round(breakdown_price, 2),
-            "停損": round(stop_loss, 2),
-            "停利": "N/A",
-            "條件": f"價格跌破 {round(nearest_support, 2)}（距離：{distance:+.1f}%）",
-            "優先級": "🔴 高",
-            "類型": "停損"
-        })
-    
-    # 策略 2：觸及壓力賣點
-    if nearest_resistance:
-        resistance_sell_price = nearest_resistance * 0.99
-        if not np.isnan(atr) and atr > 0:
-            stop_loss = resistance_sell_price + atr_mult * atr
-            take_profit = resistance_sell_price - rr * (stop_loss - resistance_sell_price)
-        else:
-            stop_loss = resistance_sell_price * 1.05
-            take_profit = resistance_sell_price * 0.90
-        
-        distance = (nearest_resistance - close) / close * 100
-        
-        result["future_sell_points"].append({
-            "情境": "🎯 觸及壓力賣點（獲利）",
-            "預估賣點": round(resistance_sell_price, 2),
-            "停損": round(stop_loss, 2),
-            "停利": round(take_profit, 2),
-            "條件": f"價格接近壓力位 {round(nearest_resistance, 2)}（距離：{distance:+.1f}%）",
-            "優先級": "🟡 中",
-            "類型": "獲利"
-        })
-    
-    # 策略 3：均線死亡交叉
-    if ema20 > sma20:
-        death_cross_price = sma20 * 0.99
-        if not np.isnan(atr) and atr > 0:
-            stop_loss = death_cross_price + atr_mult * atr
-            take_profit = death_cross_price - rr * (stop_loss - death_cross_price)
-        else:
-            stop_loss = death_cross_price * 1.05
-            take_profit = death_cross_price * 0.90
-        
-        result["future_sell_points"].append({
-            "情境": "📉 均線死亡交叉",
-            "預估賣點": round(death_cross_price, 2),
-            "停損": round(stop_loss, 2),
-            "停利": round(take_profit, 2),
-            "條件": f"EMA20 跌破 SMA20（目前：{round(sma20, 2)}）",
-            "優先級": "🔴 高",
-            "類型": "趨勢反轉"
-        })
-    
-    # 策略 4：移動停利
-    if close < recent_high:
-        trailing_stop_5 = recent_high * 0.95
-        trailing_stop_10 = recent_high * 0.90
-        
-        if not np.isnan(atr) and atr > 0:
-            stop_loss = trailing_stop_5 + atr_mult * atr
-            take_profit = trailing_stop_5 - rr * (stop_loss - trailing_stop_5)
-        else:
-            stop_loss = trailing_stop_5 * 1.05
-            take_profit = trailing_stop_5 * 0.90
-        
-        pullback_pct = (recent_high - close) / recent_high * 100
-        
-        result["future_sell_points"].append({
-            "情境": "📊 移動停利",
-            "預估賣點": f"{round(trailing_stop_5, 2)} (-5%)",
-            "停損": round(stop_loss, 2),
-            "停利": round(take_profit, 2),
-            "條件": f"近期高點：{round(recent_high, 2)}\n回撤：{pullback_pct:+.1f}%",
-            "優先級": "🟢 中",
-            "類型": "保護獲利"
-        })
-    
-    return result
 
 def latest_signal_state(df: pd.DataFrame) -> str:
     if df.empty:
@@ -450,8 +225,7 @@ def risk_levels(df: pd.DataFrame, rr: float, atr_mult: float, side: str):
     return price, stop, tp
 
 def plot_chart(df: pd.DataFrame, title: str, signal_points: pd.DataFrame | None = None, 
-               last_stop: float | None = None, last_tp: float | None = None, 
-               support_resistance: dict | None = None):
+               last_stop: float | None = None, last_tp: float | None = None):
     fig = go.Figure()
     
     fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Price"))
@@ -476,17 +250,6 @@ def plot_chart(df: pd.DataFrame, title: str, signal_points: pd.DataFrame | None 
     if last_tp is not None:
         fig.add_hline(y=last_tp, line_dash="dash", line_color="green", 
                      annotation_text="Take Profit")
-    
-    if support_resistance:
-        for key, value in support_resistance.get("壓力位", {}).items():
-            if value and value["價"] is not None:
-                fig.add_hline(y=value["價"], line_dash="dash", line_color="rgba(255,0,0,0.3)", 
-                             annotation_text=f"🔴 {key}")
-        
-        for key, value in support_resistance.get("支撐位", {}).items():
-            if value and value["價"] is not None:
-                fig.add_hline(y=value["價"], line_dash="dash", line_color="rgba(0,255,0,0.3)", 
-                             annotation_text=f"🟢 {key}")
     
     fig.update_layout(title=title, xaxis_title="Date", yaxis_title="Price", 
                      height=600, margin=dict(l=10, r=10, t=60, b=10))
@@ -596,7 +359,7 @@ def scan_top_stocks(stock_list, period, interval, rr, atr_mult, cooldown_bars=3,
                     "代號": code,
                     "名稱": stock_name,
                     "價格": round(price, 2),
-                    "成交量 (張)": round(volume_in_thousands, 1),
+                    "成交量(張)": round(volume_in_thousands, 1),
                     "訊號": signal,
                     "買點": round(buy_point, 2),
                     "停損": round(stop, 2),
@@ -617,7 +380,7 @@ def scan_top_stocks(stock_list, period, interval, rr, atr_mult, cooldown_bars=3,
                     "代號": code,
                     "名稱": stock_name,
                     "價格": round(price, 2),
-                    "成交量 (張)": round(volume_in_thousands, 1),
+                    "成交量(張)": round(volume_in_thousands, 1),
                     "訊號": signal,
                     "賣點": round(sell_point, 2),
                     "停損": round(stop, 2),
@@ -708,17 +471,14 @@ if mode == "單一股票分析" and run:
     
     st.subheader("2) 技術指標 + 買賣點")
     df = add_indicators(df)
-    support_resistance = calculate_support_resistance(df)
     signal_points = compute_signal_points(df, cooldown_bars=COOLDOWN_BARS)
-    future_points = estimate_future_buy_sell_points(df, rr, atr_mult, support_resistance)
     
     st.subheader("3) AI Trading Decision")
     signal_state = latest_signal_state(df)
     price, stop, tp = risk_levels(df, rr=rr, atr_mult=atr_mult, side=signal_state)
     
     fig = plot_chart(df, title=f"{symbol} {stock_name} Price + Indicators", 
-                    signal_points=signal_points, last_stop=stop, last_tp=tp, 
-                    support_resistance=support_resistance)
+                    signal_points=signal_points, last_stop=stop, last_tp=tp)
     st.plotly_chart(fig, use_container_width=True)
     
     if signal_state == "BUY":
@@ -736,58 +496,8 @@ if mode == "單一股票分析" and run:
     c3.metric("Take Profit", "-" if tp is None else f"{tp:,.2f}")
     c4.metric("Risk-Reward", f"1 : {rr:.2f}")
     
-    # 顯示支撐壓力位
-    st.subheader("4) 📊 關鍵支撐壓力位")
-    if support_resistance:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("##### 🔴 壓力位")
-            for key, value in support_resistance.get("壓力位", {}).items():
-                if value and value["價"] is not None:
-                    gap_str = f"({value['差距']:+.2f}%)" if value["差距"] is not None else ""
-                    st.info(f"**{key}**: {value['價']} {gap_str}")
-        with col2:
-            st.markdown("##### 🟢 支撐位")
-            for key, value in support_resistance.get("支撐位", {}).items():
-                if value and value["價"] is not None:
-                    gap_str = f"({value['差距']:+.2f}%)" if value["差距"] is not None else ""
-                    st.info(f"**{key}**: {value['價']} {gap_str}")
-    else:
-        st.info("資料不足，無法計算支撐壓力位")
-    
-    # 顯示未來預估買賣點
-    st.subheader("5) 🔮 未來預估買賣點")
-    if future_points:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("##### 🟢 未來潛在買點")
-            if future_points.get("future_buy_points"):
-                for i, buy in enumerate(future_points["future_buy_points"], 1):
-                    st.info(f"**{i}. {buy['情境']}**\n\n"
-                           f"預估買點：**{buy['預估買點']}**\n\n"
-                           f"停損：{buy['停損']}\n\n"
-                           f"停利：{buy['停利']}\n\n"
-                           f"條件：{buy['條件']}\n\n"
-                           f"優先級：{buy.get('優先級', '中')}")
-            else:
-                st.info("目前無潛在買點訊號")
-        with col2:
-            st.markdown("##### 🔴 未來潛在賣點")
-            if future_points.get("future_sell_points"):
-                for i, sell in enumerate(future_points["future_sell_points"], 1):
-                    st.warning(f"**{i}. {sell['情境']}**\n\n"
-                              f"預估賣點：**{sell['預估賣點']}**\n\n"
-                              f"停損：{sell['停損']}\n\n"
-                              f"停利：{sell['停利']}\n\n"
-                              f"條件：{sell['條件']}\n\n"
-                              f"優先級：{sell.get('優先級', '中')}")
-            else:
-                st.warning("目前無潛在賣點訊號")
-    else:
-        st.info("資料不足，無法預估未來買賣點")
-    
     # ✅ 修正：歷史買賣點記錄（KeyError 已修正）
-    st.subheader("6) 歷史買賣點記錄")
+    st.subheader("4) 歷史買賣點記錄")
     if not signal_points.empty:
         signal_points_display = signal_points.copy()
         signal_points_display["時間"] = signal_points_display["Time"].dt.strftime("%Y-%m-%d")
@@ -797,7 +507,7 @@ if mode == "單一股票分析" and run:
     else:
         st.info("期間內無歷史買賣點訊號")
     
-    st.subheader("7) 指標快照（最近 10 筆）")
+    st.subheader("5) 指標快照（最近 10 筆）")
     snap_cols = ["Close", "SMA20", "EMA20", "RSI14", "BB_High", "BB_Low", "ATR14"]
     st.dataframe(df[snap_cols].tail(10), use_container_width=True)
 
@@ -811,7 +521,7 @@ elif mode == "Top 10 掃描器" and run:
     
     if not top10.empty:
         st.success(f"找到 {len(top10)} 檔符合訊號的股票")
-        display_cols = ["代號", "名稱", "價格", "成交量 (張)", "訊號", 
+        display_cols = ["代號", "名稱", "價格", "成交量(張)", "訊號", 
                       "買點" if "買點" in top10.columns else "賣點", "停損", "停利", "評分"]
         st.dataframe(top10[display_cols], use_container_width=True)
         
