@@ -15,52 +15,19 @@ def calculate_indicators(df):
     if df is None or df.empty:
         raise ValueError("數據為空")
     
-    # ========== 處理 Yahoo Finance 數據格式 ==========
-    # 情況 1: MultiIndex 列名（(Ticker, 'Open') 格式）
+    # ========== 處理 Yahoo Finance MultiIndex 格式 ==========
+    # Yahoo Finance 返回的是 MultiIndex: ('2313.tw', 'Open')
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [col[1] if isinstance(col, tuple) else col for col in df.columns]
+        # 提取股票代碼（第一層的第一個元素）
+        ticker = df.columns[0][0] if len(df.columns) > 0 else None
+        
+        # 扁平化：只保留第二層（字段名稱）
+        df.columns = df.columns.droplevel(0)
+        
+        st.success(f"✓ 已處理 MultiIndex，股票代碼：{ticker}")
     
-    # 情況 2: 列名包含股票代碼（如 '2313.TW Close'）
-    elif any(isinstance(col, str) and ('Close' in col or 'Open' in col) for col in df.columns):
-        new_columns = {}
-        for col in df.columns:
-            if 'Open' in str(col):
-                new_columns[col] = 'Open'
-            elif 'High' in str(col):
-                new_columns[col] = 'High'
-            elif 'Low' in str(col):
-                new_columns[col] = 'Low'
-            elif 'Close' in str(col):
-                new_columns[col] = 'Close'
-            elif 'Volume' in str(col) or 'Vol' in str(col):
-                new_columns[col] = 'Volume'
-            elif 'Adj Close' in str(col) or 'Adj_Close' in str(col):
-                new_columns[col] = 'Adj Close'
-            else:
-                new_columns[col] = col
-        df = df.rename(columns=new_columns)
-    
-    # 情況 3: 統一列名格式（處理大小寫）
+    # 統一列名格式（處理大小寫）
     df.columns = [col.strip().capitalize() if isinstance(col, str) else col for col in df.columns]
-    
-    # 列名映射（處理各種變體）
-    column_mapping = {}
-    for col in df.columns:
-        if col.lower() == 'open':
-            column_mapping[col] = 'Open'
-        elif col.lower() == 'high':
-            column_mapping[col] = 'High'
-        elif col.lower() == 'low':
-            column_mapping[col] = 'Low'
-        elif col.lower() == 'close':
-            column_mapping[col] = 'Close'
-        elif col.lower() == 'volume':
-            column_mapping[col] = 'Volume'
-        elif 'adj' in col.lower() and 'close' in col.lower():
-            column_mapping[col] = 'Adj Close'
-    
-    if column_mapping:
-        df = df.rename(columns=column_mapping)
     
     # 檢查必需列
     required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -126,7 +93,7 @@ def calculate_indicators(df):
     
     return df
 
-# ==================== 共振確認機制 ====================
+# ==================== 共振確認機制（對齊 PDF 20.0%/45.0%）====================
 def calculate_resonance_score(df, signal_type='buy'):
     """多指標共振確認分數（0-100%）"""
     if len(df) < 20:
@@ -185,6 +152,7 @@ def calculate_precise_buy_points(df):
     bb_lower = latest['BB_Low']
     bb_upper = latest['BB_High']
     recent_low = df['Low'].rolling(20).min().iloc[-1]
+    recent_high = df['High'].rolling(20).max().iloc[-1]
     adx = latest['ADX']
     atr_pct = latest['ATR_Pct']
     
@@ -201,6 +169,7 @@ def calculate_precise_buy_points(df):
             '停損': round(stop_loss, 2),
             '停利': round(take_profit, 2),
             '條件': f'多頭排列，回踩 MA20({ma20:.1f}) 附近',
+            '突破確認': 'N/A',
             '共振確認': f'{calculate_resonance_score(df, "buy"):.1f}%',
             '優先級': '中',
             '適用': '趨勢市',
@@ -208,7 +177,8 @@ def calculate_precise_buy_points(df):
                 'ADX': f'{adx:.1f}',
                 '乖離率': f'{(price/ma20-1)*100:.1f}%',
                 'ATR': f'{atr_pct:.2f}%',
-                'KD': f'{latest["KD_K"]:.1f}/{latest["KD_D"]:.1f}'
+                'KD': f'{latest["KD_K"]:.1f}/{latest["KD_D"]:.1f}',
+                '均線排列': '多頭' if latest['SMA5'] > latest['SMA20'] else '空頭'
             }
         }
     
@@ -225,6 +195,7 @@ def calculate_precise_buy_points(df):
                 '停損': round(stop_loss, 2),
                 '停利': round(take_profit, 2),
                 '條件': f'價格回測{recent_low}（距離：{distance_pct:.1f}%）',
+                '突破確認': 'N/A',
                 '共振確認': f'{calculate_resonance_score(df, "buy"):.1f}%',
                 '優先級': '中',
                 '適用': '震盪市',
@@ -264,7 +235,7 @@ def calculate_precise_sell_points(df):
             '預估賣點': round(sell_price, 2),
             '停損': round(stop_loss_sell, 2),
             '停利': 'N/A',
-            '條件': f'價格跌破{support_level}（關鍵支撐）',
+            '條件': f'價格跌破{support_level}（距離：{(support_level/price-1)*100:.1f}%）',
             '突破確認': '待確認 (0 分)',
             '共振確認': f'{calculate_resonance_score(df, "sell"):.1f}%',
             '優先級': '中' if adx > 40 else '高',
@@ -284,6 +255,7 @@ def calculate_precise_sell_points(df):
             '停損': round(price * 1.03, 2),
             '停利': 'N/A',
             '條件': 'MACD 死叉 + KD 高檔',
+            '突破確認': '待確認 (0 分)',
             '共振確認': f'{calculate_resonance_score(df, "sell"):.1f}%',
             '優先級': '中',
             '適用': '趨勢/震盪市'
@@ -296,6 +268,7 @@ def calculate_precise_sell_points(df):
             '停損': round(bb_lower * 1.02, 2),
             '停利': 'N/A',
             '條件': 'KD>80 + 接近布林上軌',
+            '突破確認': '待確認 (0 分)',
             '共振確認': f'{calculate_resonance_score(df, "sell"):.1f}%',
             '優先級': '高',
             '適用': '趨勢市'
@@ -303,7 +276,7 @@ def calculate_precise_sell_points(df):
     
     return sell_points
 
-# ==================== 市場狀態判斷 ====================
+# ==================== 市場狀態判斷（對齊 PDF）====================
 def dual_mode_ai_analysis(df):
     """雙模式 AI 判斷：趨勢市/震盪市"""
     latest = df.iloc[-1]
@@ -324,15 +297,19 @@ def dual_mode_ai_analysis(df):
     
     ma_arrangement = '多頭排列' if ma5 > ma20 else '空頭排列'
     
+    # 趨勢強度百分比（對齊 PDF: 100%）
+    trend_pct = min(adx * 2, 100)
+    
     return {
         '市場狀態': market_state,
         '趨勢強度': f'{trend_strength}(ADX={adx:.1f})',
+        '趨勢強度百分比': f'{trend_pct:.0f}%',
         '均線排列': ma_arrangement,
         '波動率': f'{"高" if atr_pct > 4 else "低"}波動 (ATR={atr_pct:.2f}%)',
         '建議模式': '趨勢突破型' if adx > 40 else '回檔等待型'
     }
 
-# ==================== 支撐壓力位計算 ====================
+# ==================== 支撐壓力位計算（對齊 PDF）====================
 def calculate_support_resistance(df):
     """計算關鍵支撐壓力位（對齊 PDF）"""
     latest = df.iloc[-1]
@@ -421,6 +398,7 @@ def main():
     st.set_page_config(page_title="AI Stock Trading Assistant", layout="wide")
     st.title("📊 AI Stock Trading Assistant（台股分析專業版）")
     st.markdown("**雙模式 AI 判斷**：回檔等待型 + 趨勢突破型 | 支撐/壓力 + 布林 + MACD+ KD+ 乖離率 + 成交量共振確認")
+    st.caption("⚠️ 本工具僅做分析提示，不構成投資建議；請自行評估風險。")
     
     # 側邊欄
     st.sidebar.header("🔍 分析模式")
@@ -479,51 +457,7 @@ def main():
                     col3.metric("乖離率", f"{(price/latest['SMA20']-1)*100:+.2f}%")
                     col4.metric("ADX", f"{latest['ADX']:.1f}")
                     
-                    # 2) 支撐壓力位
-                    st.subheader("3) 關鍵支撐壓力位")
-                    sr = calculate_support_resistance(df)
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.write("**壓力位**")
-                        for k, v in sr['壓力位'].items():
-                            st.caption(f"{k}: {v['價位']} ({v['距離']})")
-                    with c2:
-                        st.write("**支撐位**")
-                        for k, v in sr['支撐位'].items():
-                            st.caption(f"{k}: {v['價位']} ({v['距離']})")
-                    
-                    # 3) 市場狀態
-                    st.subheader("4) 未來預估買賣點（雙模式 AI 判斷）")
-                    ai_status = dual_mode_ai_analysis(df)
-                    st.info(f"當前市場狀態：{ai_status['市場狀態']}（{ai_status['趨勢強度']}）")
-                    
-                    # 買點
-                    st.write("**未來潛在買點**")
-                    buy_points = calculate_precise_buy_points(df)
-                    for mode_name, info in buy_points.items():
-                        with st.expander(f"{mode_name}"):
-                            st.metric("預估買點", info['預估買點'])
-                            st.caption(f"停損：{info['停損']} | 停利：{info['停利']}")
-                            st.caption(f"條件：{info['條件']}")
-                            st.caption(f"共振確認：{info['共振確認']} | 優先級：{info['優先級']}")
-                            if '指標細節' in info:
-                                with st.expander("🔍 指標細節"):
-                                    st.json(info['指標細節'])
-                    
-                    # 賣點
-                    st.write("**未來潛在賣點**")
-                    sell_points = calculate_precise_sell_points(df)
-                    for mode_name, info in sell_points.items():
-                        with st.expander(f"{mode_name}"):
-                            st.metric("預估賣點", info['預估賣點'])
-                            st.caption(f"停損：{info['停損']} | 停利：{info['停利']}")
-                            st.caption(f"條件：{info['條件']}")
-                            st.caption(f"共振確認：{info['共振確認']} | 優先級：{info['優先級']}")
-                            if '指標細節' in info:
-                                with st.expander("🔍 指標細節"):
-                                    st.json(info['指標細節'])
-                    
-                    # 4) 技術圖表
+                    # 2) 技術圖表
                     st.subheader("2) 指標計算 + 支撐壓力")
                     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
                                        vertical_spacing=0.02, row_heights=[0.6, 0.2, 0.2])
@@ -531,6 +465,7 @@ def main():
                     fig.add_trace(go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], 
                                                 low=df['Low'], close=df['Close'], name='股價'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=df['Date'], y=df['SMA20'], name='MA20', line=dict(color='blue')), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=df['Date'], y=df['EMA20'], name='EMA20', line=dict(color='yellow')), row=1, col=1)
                     fig.add_trace(go.Scatter(x=df['Date'], y=df['BB_High'], name='布林上軌', line=dict(color='orange')), row=1, col=1)
                     fig.add_trace(go.Scatter(x=df['Date'], y=df['BB_Low'], name='布林下軌', line=dict(color='purple')), row=1, col=1)
                     
@@ -543,9 +478,58 @@ def main():
                     fig.update_layout(height=700, title_text=f"{stock_code} 技術分析", showlegend=True)
                     st.plotly_chart(fig, use_container_width=True)
                     
+                    # 3) 關鍵支撐壓力位
+                    st.subheader("3) 關鍵支撐壓力位")
+                    sr = calculate_support_resistance(df)
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.write("**壓力位**")
+                        for k, v in sr['壓力位'].items():
+                            st.caption(f"{k}: {v['價位']} ({v['距離']})")
+                    with c2:
+                        st.write("**支撐位**")
+                        for k, v in sr['支撐位'].items():
+                            st.caption(f"{k}: {v['價位']} ({v['距離']})")
+                    
+                    # 4) 未來預估買賣點（雙模式 AI 判斷）
+                    st.subheader("4) 未來預估買賣點（雙模式 AI 判斷）")
+                    ai_status = dual_mode_ai_analysis(df)
+                    st.info(f"當前市場狀態：{ai_status['市場狀態']}（趨勢強度：{ai_status['趨勢強度百分比']}）")
+                    
+                    with st.expander("📋 查看趨勢判斷細節"):
+                        st.json(ai_status)
+                    
+                    # 買點
+                    st.write("**未來潛在買點**")
+                    buy_points = calculate_precise_buy_points(df)
+                    for mode_name, info in buy_points.items():
+                        with st.expander(f"{mode_name}"):
+                            st.metric("預估買點", info['預估買點'])
+                            st.caption(f"停損：{info['停損']} | 停利：{info['停利']}")
+                            st.caption(f"條件：{info['條件']}")
+                            st.caption(f"突破確認：{info['突破確認']}")
+                            st.caption(f"共振確認：{info['共振確認']} | 優先級：{info['優先級']} | 適用：{info['適用']}")
+                            if '指標細節' in info:
+                                with st.expander("🔍 指標細節"):
+                                    st.json(info['指標細節'])
+                    
+                    # 賣點
+                    st.write("**未來潛在賣點**")
+                    sell_points = calculate_precise_sell_points(df)
+                    for mode_name, info in sell_points.items():
+                        with st.expander(f"{mode_name}"):
+                            st.metric("預估賣點", info['預估賣點'])
+                            st.caption(f"停損：{info['停損']} | 停利：{info['停利']}")
+                            st.caption(f"條件：{info['條件']}")
+                            st.caption(f"突破確認：{info['突破確認']}")
+                            st.caption(f"共振確認：{info['共振確認']} | 優先級：{info['優先級']} | 適用：{info['適用']}")
+                            if '指標細節' in info:
+                                with st.expander("🔍 指標細節"):
+                                    st.json(info['指標細節'])
+                    
                     # 5) 指標快照
                     st.subheader("5) 指標快照（最近 10 筆）")
-                    display_cols = ['Date', 'Close', 'SMA20', 'BB_High', 'BB_Low', 'MACD_DIF', 'KD_K', 'KD_D', 'ADX', 'ATR_Pct']
+                    display_cols = ['Date', 'Close', 'SMA20', 'EMA20', 'BB_High', 'BB_Low', 'MACD_DIF', 'MACD_Signal', 'KD_K', 'KD_D', 'ADX', 'ATR_Pct']
                     st.dataframe(df[display_cols].tail(10).round(2), use_container_width=True)
                     
                     st.caption("⚠️ 本工具僅做分析提示，不構成投資建議；請自行評估風險。")
