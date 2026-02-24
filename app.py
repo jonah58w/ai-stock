@@ -1,8 +1,9 @@
 # ==========================================
 # AI 台股量化專業平台（官方資料源版：TWSE + TPEX）
-# - Streamlit Cloud 友善（不依賴 Yahoo / yfinance）
+# Streamlit Cloud 友善：不依賴 Yahoo / yfinance
 # - 單一股票分析 + Top10 掃描器
 # - 技術指標 + AI 趨勢分數 + ATR 停損 + RF 3日預測
+# - ✅ 修正：固定抓 12 個月，再依 period 切資料（避免單月空資料造成失敗）
 # ==========================================
 
 from __future__ import annotations
@@ -38,7 +39,6 @@ def _period_to_months(period: str) -> int:
         return max(1, int(p.replace("mo", "")))
     if p.endswith("y"):
         return max(1, int(p.replace("y", ""))) * 12
-    # default
     return 6
 
 
@@ -86,7 +86,6 @@ def _fetch_twse_month(code: str, yyyymm: str) -> pd.DataFrame | None:
     """
     TWSE 上市：抓單月資料（yyyymm = '202601'）
     """
-    # TWSE 要 date=YYYYMMDD（DD可給01）
     date_str = f"{yyyymm}01"
     url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date_str}&stockNo={code}"
     r = requests.get(url, timeout=15)
@@ -102,8 +101,6 @@ def _fetch_twse_month(code: str, yyyymm: str) -> pd.DataFrame | None:
 
     df = pd.DataFrame(data, columns=fields)
 
-    # 常見欄位名稱（TWSE）
-    # 日期 / 開盤價 / 最高價 / 最低價 / 收盤價 / 成交股數
     colmap = {
         "日期": "Date",
         "開盤價": "Open",
@@ -117,8 +114,6 @@ def _fetch_twse_month(code: str, yyyymm: str) -> pd.DataFrame | None:
     if "Date" not in df.columns:
         return None
 
-    # 日期是民國：例如 114/02/03
-    # 轉成 AD
     def parse_twse_date(s):
         s = str(s)
         parts = s.split("/")
@@ -145,7 +140,7 @@ def _fetch_twse_month(code: str, yyyymm: str) -> pd.DataFrame | None:
 
 def _fetch_tpex_month(code: str, yyyymm: str) -> pd.DataFrame | None:
     """
-    TPEX 上櫃：st43_result.php 抓單月資料（yyyymm = '202601'）
+    TPEX 上櫃：抓單月資料（yyyymm = '202601'）
     參數 d 需要民國年/月：例如 114/02
     """
     y = int(yyyymm[:4])
@@ -156,14 +151,10 @@ def _fetch_tpex_month(code: str, yyyymm: str) -> pd.DataFrame | None:
     r = requests.get(url, timeout=15)
     j = r.json()
 
-    # 常見結構：{"aaData":[...], "iTotalRecords":...} 或 {"data":[...]}
     data = j.get("aaData") or j.get("data") or []
     if not data:
         return None
 
-    # 典型欄位順序常見為：
-    # [日期, 成交股數, 成交金額, 開盤, 最高, 最低, 收盤, 漲跌, 成交筆數]
-    # 這裡只取我們需要的
     rows = []
     for row in data:
         if not row or len(row) < 7:
@@ -176,7 +167,6 @@ def _fetch_tpex_month(code: str, yyyymm: str) -> pd.DataFrame | None:
         low_s = row[5]
         close_s = row[6]
 
-        # 日期為民國：114/02/03
         parts = str(date_s).split("/")
         if len(parts) == 3:
             yy = int(parts[0]) + 1911
@@ -208,47 +198,62 @@ def _fetch_tpex_month(code: str, yyyymm: str) -> pd.DataFrame | None:
 @st.cache_data(ttl=600)
 def download_data(code: str, period: str = "6mo"):
     """
-    先抓 TWSE（上市），不行再抓 TPEX（上櫃）。
-    由於兩者都是「按月」回傳，因此會把最近 N 個月串起來。
+    ✅ 穩定抓取策略：
+    - 固定抓最近 12 個月（TWSE 或 TPEX），避免單月空資料導致整段失敗
+    - 再依使用者選擇的 period (3mo/6mo/12mo) 切資料
     """
     code = _norm_code(code)
-    months = _period_to_months(period)
 
-    end = dt.date.today().replace(day=1)
-    month_list = [(end - relativedelta(months=i)).strftime("%Y%m") for i in range(months)]
+    # 固定抓 12 個月（最穩）
+    months = 12
+    today = dt.date.today()
+    end = today.replace(day=1)
+
+    month_list = [
+        (end - relativedelta(months=i)).strftime("%Y%m")
+        for i in range(months)
+    ]
     month_list = list(reversed(month_list))
 
-    # 1) try TWSE
-    twse_parts = []
+    # 先試 TWSE
+    parts = []
     for yyyymm in month_list:
         try:
             mdf = _fetch_twse_month(code, yyyymm)
             if mdf is not None and not mdf.empty:
-                twse_parts.append(mdf)
+                parts.append(mdf)
         except:
             pass
 
-    if twse_parts:
-        df = pd.concat(twse_parts).sort_index()
+    src = None
+    if parts:
+        df = pd.concat(parts).sort_index()
         df = df[~df.index.duplicated(keep="last")]
-        return df, "TWSE"
+        src = "TWSE"
+    else:
+        # 再試 TPEX
+        parts = []
+        for yyyymm in month_list:
+            try:
+                mdf = _fetch_tpex_month(code, yyyymm)
+                if mdf is not None and not mdf.empty:
+                    parts.append(mdf)
+            except:
+                pass
 
-    # 2) try TPEX
-    tpex_parts = []
-    for yyyymm in month_list:
-        try:
-            mdf = _fetch_tpex_month(code, yyyymm)
-            if mdf is not None and not mdf.empty:
-                tpex_parts.append(mdf)
-        except:
-            pass
+        if not parts:
+            return None, None
 
-    if tpex_parts:
-        df = pd.concat(tpex_parts).sort_index()
+        df = pd.concat(parts).sort_index()
         df = df[~df.index.duplicated(keep="last")]
-        return df, "TPEX"
+        src = "TPEX"
 
-    return None, None
+    # 依使用者 period 切資料
+    months_keep = _period_to_months(period)
+    cutoff = df.index.max() - relativedelta(months=months_keep)
+    df = df[df.index >= cutoff]
+
+    return df, src
 
 
 # -------------------------
@@ -276,7 +281,6 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["Lower"] = ma20 - 2 * std20
 
     df["Volume_MA"] = df["Volume"].rolling(20).mean()
-
     return df
 
 
@@ -356,7 +360,6 @@ def predict_price_3d(df: pd.DataFrame):
 
 def scan_top10(stock_list: list[str], period: str = "6mo") -> pd.DataFrame:
     rows = []
-
     for code in stock_list:
         df, src = download_data(code, period=period)
         if df is None or len(df) < 80:
@@ -374,7 +377,6 @@ def scan_top10(stock_list: list[str], period: str = "6mo") -> pd.DataFrame:
     result_df = pd.DataFrame(rows, columns=["股票", "資料來源", "AI分數"])
     if result_df.empty:
         return result_df
-
     return result_df.sort_values("AI分數", ascending=False).head(10)
 
 
@@ -416,7 +418,7 @@ if mode == "單一股票分析":
     st.subheader("🧠 AI 3日價格預測（RandomForest）")
 
     if pred is None:
-        st.info("資料量不足或指標不足，暫不做預測（建議期間選 12mo 會更穩）。")
+        st.info("資料量不足或指標不足，暫不做預測（建議資料期間選 12mo 會更穩）。")
     else:
         st.write("預測價格：", round(pred, 2))
         if change_pct > 1:
@@ -430,15 +432,14 @@ if mode == "單一股票分析":
     st.line_chart(df["Close"])
 
 else:
-    # 先用小池測試，之後你要我再幫你改成「全市場自動抓清單」也可以
-    stock_pool = ["2330", "2317", "2303", "2454", "8046", "3037", "2382"]
+    # 先用小池測試；你要全市場掃描我再幫你改成自動抓全代號 + 加速
+    stock_pool = ["2330", "2317", "2303", "2454", "6274", "8046", "3037", "2382"]
 
     st.caption("Top10 掃描器：使用 TWSE/TPEX 官方資料源，雲端穩定度高。")
     result = scan_top10(stock_pool, period=period)
 
     st.subheader("🔥 AI 強勢股 Top 10")
-
     if result.empty:
-        st.warning("目前掃描結果為空：可能是 stock_pool 代號都不在該市場，或 API 暫時無回傳。")
+        st.warning("目前掃描結果為空：可能是 API 暫時無回傳或 stock_pool 無資料。稍後再試即可。")
     else:
         st.dataframe(result, use_container_width=True)
