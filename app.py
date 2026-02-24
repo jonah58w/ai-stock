@@ -6,11 +6,21 @@ from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import warnings
+import time
 warnings.filterwarnings('ignore')
 
 # ==================== 技術指標計算 ====================
 def calculate_indicators(df):
     """計算所有技術指標（對齊 PDF 邏輯）"""
+    if df is None or df.empty:
+        raise ValueError("數據為空")
+    
+    # 檢查必需列
+    required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"缺少必要欄位：{missing_cols}")
+    
     df = df.copy()
     
     # 移動平均線
@@ -65,12 +75,9 @@ def calculate_indicators(df):
     
     return df
 
-# ==================== 共振確認機制（精準對齊 PDF）====================
+# ==================== 共振確認機制 ====================
 def calculate_resonance_score(df, signal_type='buy'):
-    """
-    多指標共振確認分數（0-100%）
-    對齊 PDF 顯示的 20.0%/45.0% 邏輯
-    """
+    """多指標共振確認分數（0-100%）"""
     if len(df) < 20:
         return 0.0
     
@@ -89,7 +96,7 @@ def calculate_resonance_score(df, signal_type='buy'):
     if signal_type == 'buy':
         if latest['KD_K'] > latest['KD_D'] and latest['KD_K'] < 80:
             score += weights['KD']
-    else:  # sell
+    else:
         if latest['KD_K'] < latest['KD_D'] or latest['KD_K'] > 80:
             score += weights['KD']
     
@@ -115,11 +122,9 @@ def calculate_resonance_score(df, signal_type='buy'):
     
     return round(min(score, 100), 1)
 
-# ==================== 精準買點計算（對齊 PDF）====================
+# ==================== 精準買點計算 ====================
 def calculate_precise_buy_points(df):
-    """
-    精準買點計算（完全對齊 PDF 邏輯）
-    """
+    """精準買點計算（完全對齊 PDF 邏輯）"""
     if len(df) < 30:
         return {}
     
@@ -129,18 +134,16 @@ def calculate_precise_buy_points(df):
     bb_lower = latest['BB_Low']
     bb_upper = latest['BB_High']
     recent_low = df['Low'].rolling(20).min().iloc[-1]
-    recent_high = df['High'].rolling(20).max().iloc[-1]
     adx = latest['ADX']
     atr_pct = latest['ATR_Pct']
     
     buy_points = {}
     
-    # === 趨勢突破型買點（ADX>40）===
-    if adx > 40:
-        # 回踩 MA20 附近（對齊 PDF: 474.16）
-        pullback_buy = ma20 * 1.005  # MA20 上方 0.5%
-        stop_loss = pullback_buy * (1 - atr_pct/100 * 2)  # ATR*2 停損
-        take_profit = pullback_buy * (1 + atr_pct/100 * 9)  # ATR*9 停利
+    # 趨勢突破型買點（ADX>40）
+    if adx > 40 and ma20 > 0:
+        pullback_buy = ma20 * 1.005
+        stop_loss = pullback_buy * (1 - atr_pct/100 * 2) if atr_pct > 0 else pullback_buy * 0.91
+        take_profit = pullback_buy * (1 + atr_pct/100 * 9) if atr_pct > 0 else pullback_buy * 1.45
         
         buy_points['趨勢突破型_回踩買點'] = {
             '預估買點': round(pullback_buy, 2),
@@ -158,39 +161,35 @@ def calculate_precise_buy_points(df):
             }
         }
     
-    # === 回檔等待型買點（ADX<=40 或震盪市）===
+    # 回檔等待型買點
     if adx <= 40 or price < ma20:
-        # 回測近期低點（對齊 PDF: 351.99）
-        support_buy = recent_low * 1.01  # 低點上方 1%
-        stop_loss = support_buy * 0.95  # -5% 停損
-        take_profit = support_buy * 1.61  # +61% 停利（對齊 PDF）
-        
-        distance_pct = (recent_low/price - 1) * 100
-        
-        buy_points['回檔等待型_支撐買點'] = {
-            '預估買點': round(support_buy, 2),
-            '停損': round(stop_loss, 2),
-            '停利': round(take_profit, 2),
-            '條件': f'價格回測{recent_low}（距離：{distance_pct:.1f}%）',
-            '共振確認': f'{calculate_resonance_score(df, "buy"):.1f}%',
-            '優先級': '中',
-            '適用': '震盪市',
-            '指標細節': {
-                '距離低點': f'{distance_pct:.1f}%',
-                '布林下軌': f'{bb_lower:.2f}',
-                'KD': f'{latest["KD_K"]:.1f}/{latest["KD_D"]:.1f}',
-                '量能': f'{latest["VOL_5T"]/latest["VOL_10T"]:.2f}x'
+        if recent_low > 0:
+            support_buy = recent_low * 1.01
+            stop_loss = support_buy * 0.95
+            take_profit = support_buy * 1.61
+            distance_pct = (recent_low/price - 1) * 100
+            
+            buy_points['回檔等待型_支撐買點'] = {
+                '預估買點': round(support_buy, 2),
+                '停損': round(stop_loss, 2),
+                '停利': round(take_profit, 2),
+                '條件': f'價格回測{recent_low}（距離：{distance_pct:.1f}%）',
+                '共振確認': f'{calculate_resonance_score(df, "buy"):.1f}%',
+                '優先級': '中',
+                '適用': '震盪市',
+                '指標細節': {
+                    '距離低點': f'{distance_pct:.1f}%',
+                    '布林下軌': f'{bb_lower:.2f}',
+                    'KD': f'{latest["KD_K"]:.1f}/{latest["KD_D"]:.1f}',
+                    '量能': f'{latest["VOL_5T"]/latest["VOL_10T"]:.2f}x' if latest["VOL_10T"] > 0 else 'N/A'
+                }
             }
-        }
     
     return buy_points
 
-# ==================== 精準賣點計算（對齊 PDF）====================
+# ==================== 精準賣點計算 ====================
 def calculate_precise_sell_points(df):
-    """
-    精準賣點計算（停損/反轉/獲利了結）
-    對齊 PDF: 跌破支撐賣點 345.01, 停損 395.86, 共振 45.0%
-    """
+    """精準賣點計算（停損/反轉/獲利了結）"""
     if len(df) < 30:
         return {}
     
@@ -199,35 +198,35 @@ def calculate_precise_sell_points(df):
     ma20 = latest['SMA20']
     bb_lower = latest['BB_Low']
     recent_low = df['Low'].rolling(20).min().iloc[-1]
-    atr = latest['ATR']
     atr_pct = latest['ATR_Pct']
     adx = latest['ADX']
     
     sell_points = {}
     
-    # 賣點 1: 跌破支撐（停損型，對齊 PDF: 345.01）
-    support_level = min(ma20 * 0.95, recent_low)
-    sell_price = support_level * 0.99  # 略低於支撐
-    stop_loss_sell = support_level * 1.05  # 反向停損 +5%（空單邏輯）
-    
-    sell_points['跌破支撐賣點（停損）'] = {
-        '預估賣點': round(sell_price, 2),
-        '停損': round(stop_loss_sell, 2),
-        '停利': 'N/A',
-        '條件': f'價格跌破{support_level}（關鍵支撐）',
-        '突破確認': '待確認 (0 分)',
-        '共振確認': f'{calculate_resonance_score(df, "sell"):.1f}%',
-        '優先級': '中' if adx > 40 else '高',
-        '適用': '趨勢市',
-        '指標細節': {
-            '支撐位': f'{support_level:.2f}',
-            'ATR': f'{atr_pct:.2f}%',
-            'MACD': f'{latest["MACD_DIF"]:.2f}/{latest["MACD_Signal"]:.2f}',
-            'KD': f'{latest["KD_K"]:.1f}/{latest["KD_D"]:.1f}'
+    # 賣點 1: 跌破支撐
+    if ma20 > 0 and recent_low > 0:
+        support_level = min(ma20 * 0.95, recent_low)
+        sell_price = support_level * 0.99
+        stop_loss_sell = support_level * 1.05
+        
+        sell_points['跌破支撐賣點（停損）'] = {
+            '預估賣點': round(sell_price, 2),
+            '停損': round(stop_loss_sell, 2),
+            '停利': 'N/A',
+            '條件': f'價格跌破{support_level}（關鍵支撐）',
+            '突破確認': '待確認 (0分)',
+            '共振確認': f'{calculate_resonance_score(df, "sell"):.1f}%',
+            '優先級': '中' if adx > 40 else '高',
+            '適用': '趨勢市',
+            '指標細節': {
+                '支撐位': f'{support_level:.2f}',
+                'ATR': f'{atr_pct:.2f}%',
+                'MACD': f'{latest["MACD_DIF"]:.2f}/{latest["MACD_Signal"]:.2f}',
+                'KD': f'{latest["KD_K"]:.1f}/{latest["KD_D"]:.1f}'
+            }
         }
-    }
     
-    # 賣點 2: MACD 死叉反轉
+    # 賣點 2: MACD 死叉
     if latest['MACD_DIF'] < latest['MACD_Signal']:
         sell_points['MACD 死叉賣點'] = {
             '預估賣點': round(price * 0.98, 2),
@@ -239,7 +238,7 @@ def calculate_precise_sell_points(df):
             '適用': '趨勢/震盪市'
         }
     
-    # 賣點 3: 獲利了結（布林上軌 + 超買）
+    # 賣點 3: 獲利了結
     if latest['KD_K'] > 80 and price > bb_lower:
         sell_points['獲利了結賣點'] = {
             '預估賣點': round(price * 0.99, 2),
@@ -294,7 +293,6 @@ def calculate_support_resistance(df):
     bb_low = latest['BB_Low']
     ma20 = latest['SMA20']
     
-    # 52 周高低點
     if len(df) >= 252:
         high_52w = df['High'].rolling(252).max().iloc[-1]
         low_52w = df['Low'].rolling(252).min().iloc[-1]
@@ -303,6 +301,8 @@ def calculate_support_resistance(df):
         low_52w = df['Low'].min()
     
     def calc_distance(level, price):
+        if price == 0:
+            return 'N/A'
         return f'{(level/price-1)*100:+.2f}%'
     
     return {
@@ -320,9 +320,7 @@ def calculate_support_resistance(df):
 
 # ==================== Top 10 篩選引擎 ====================
 def screen_top_stocks(stock_list, days=252):
-    """
-    Top 10 篩選：基於動量 + 共振分數
-    """
+    """Top 10 篩選：基於動量 + 共振分數"""
     results = []
     
     for stock in stock_list:
@@ -334,23 +332,18 @@ def screen_top_stocks(stock_list, days=252):
             df = calculate_indicators(df)
             latest = df.iloc[-1]
             
-            # 計算篩選分數
             momentum_score = 0
             
-            # 動量分數（漲幅）
             if len(df) >= 20:
                 ret_20d = (latest['Close'] / df.iloc[-20]['Close'] - 1) * 100
-                momentum_score += min(ret_20d, 30)  # 最多 30 分
+                momentum_score += min(ret_20d, 30)
             
-            # 趨勢強度（ADX）
             adx = latest['ADX']
-            momentum_score += min(adx * 0.5, 25)  # 最多 25 分
+            momentum_score += min(adx * 0.5, 25)
             
-            # 共振確認
             resonance = calculate_resonance_score(df, 'buy')
-            momentum_score += resonance * 0.3  # 最多 30 分
+            momentum_score += resonance * 0.3
             
-            # 量能確認
             if latest['VOL_5T'] > latest['VOL_10T'] * 1.2:
                 momentum_score += 15
             
@@ -366,7 +359,6 @@ def screen_top_stocks(stock_list, days=252):
         except:
             continue
     
-    # 排序取 Top 10
     if results:
         df_res = pd.DataFrame(results)
         return df_res.sort_values('綜合分數', ascending=False).head(10)
@@ -383,18 +375,47 @@ def main():
     st.sidebar.header("🔍 分析模式")
     mode = st.sidebar.radio("選擇模式", ["單一股票分析", "Top 10 潛力股篩選"])
     
-    # === 模式 1: 單一股票分析 ===
     if mode == "單一股票分析":
-        stock_code = st.sidebar.text_input("股票代碼", "3163.TW")
+        stock_input = st.sidebar.text_input("股票代碼", "3163")
+        
+        # 自動添加 .TW 後綴
+        if stock_input:
+            if '.TW' not in stock_input and '.TWO' not in stock_input:
+                stock_code = stock_input.strip() + '.TW'
+            else:
+                stock_code = stock_input.strip()
+        else:
+            stock_code = "3163.TW"
+        
+        st.sidebar.caption(f"完整代碼：{stock_code}")
         
         if st.sidebar.button("開始分析"):
-            with st.spinner('下載數據中...'):
+            with st.spinner(f'正在下載 {stock_code} 數據...'):
                 try:
-                    df = yf.download(stock_code, period="1y", interval="1d", progress=False)
-                    if df.empty:
-                        st.error("無法獲取數據")
+                    # 下載數據（重試機制）
+                    df = None
+                    for attempt in range(3):
+                        try:
+                            df = yf.download(stock_code, period="1y", interval="1d", progress=False)
+                            if df is not None and not df.empty:
+                                break
+                        except Exception as e:
+                            if attempt < 2:
+                                st.warning(f"嘗試 {attempt+1} 失敗，重試中...")
+                                time.sleep(2)
+                            else:
+                                raise e
+                    
+                    if df is None or df.empty:
+                        st.error(f"❌ 無法獲取 {stock_code} 的數據")
+                        st.info("**可能原因：**\n1. 股票代碼錯誤\n2. Yahoo Finance 服務暫時不可用\n3. 網路連接問題\n4. 該股票已下市")
+                        st.warning("**建議：**\n- 檢查股票代碼是否正確（例如：3163 或 3163.TW）\n- 稍後再試\n- 嘗試其他股票")
                         return
                     
+                    if len(df) < 30:
+                        st.warning(f"⚠️ 數據不足（僅 {len(df)} 筆），建議至少需要 30 筆數據")
+                    
+                    # 計算指標
                     df = calculate_indicators(df)
                     df.reset_index(inplace=True)
                     latest = df.iloc[-1]
@@ -456,18 +477,15 @@ def main():
                     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
                                        vertical_spacing=0.02, row_heights=[0.6, 0.2, 0.2])
                     
-                    # 股價
                     fig.add_trace(go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], 
                                                 low=df['Low'], close=df['Close'], name='股價'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=df['Date'], y=df['SMA20'], name='MA20', line=dict(color='blue')), row=1, col=1)
                     fig.add_trace(go.Scatter(x=df['Date'], y=df['BB_High'], name='布林上軌', line=dict(color='orange')), row=1, col=1)
                     fig.add_trace(go.Scatter(x=df['Date'], y=df['BB_Low'], name='布林下軌', line=dict(color='purple')), row=1, col=1)
                     
-                    # 成交量
                     colors = ['red' if df['Close'].iloc[i] >= df['Open'].iloc[i] else 'green' for i in range(len(df))]
                     fig.add_trace(go.Bar(x=df['Date'], y=df['Volume'], name='成交量', marker_color=colors), row=2, col=1)
                     
-                    # MACD
                     fig.add_trace(go.Scatter(x=df['Date'], y=df['MACD_DIF'], name='DIF', line=dict(color='cyan')), row=3, col=1)
                     fig.add_trace(go.Scatter(x=df['Date'], y=df['MACD_Signal'], name='Signal', line=dict(color='magenta')), row=3, col=1)
                     
@@ -483,13 +501,13 @@ def main():
                     
                 except Exception as e:
                     st.error(f"錯誤：{str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
     
-    # === 模式 2: Top 10 篩選 ===
     elif mode == "Top 10 潛力股篩選":
         st.subheader("🏆 Top 10 潛力股篩選")
         st.caption("篩選條件：20 日動量 + ADX 趨勢強度 + 共振確認分數 + 量能放大")
         
-        # 台股熱門股清單
         default_stocks = [
             '2330.TW', '2317.TW', '2454.TW', '3163.TW', '6770.TW',
             '3491.TW', '2313.TW', '1560.TW', '3105.TW', '6187.TW',
@@ -498,7 +516,7 @@ def main():
         
         stock_input = st.text_area("輸入股票代碼（用逗號分隔）", 
                                   ", ".join(default_stocks), height=100)
-        stock_list = [s.strip() + ('.TW' if '.TW' not in s.strip() else '') 
+        stock_list = [s.strip() + ('.TW' if '.TW' not in s.strip() and '.TWO' not in s.strip() else '') 
                      for s in stock_input.split(',') if s.strip()]
         
         if st.button("開始篩選"):
@@ -508,17 +526,12 @@ def main():
                 if top10 is not None and not top10.empty:
                     st.dataframe(top10, use_container_width=True)
                     
-                    # 點擊查看詳情
                     selected = st.selectbox("選擇股票查看詳細分析", top10['股票'].tolist())
                     if selected:
                         st.session_state['selected_stock'] = selected + '.TW'
                         st.rerun()
                 else:
                     st.warning("未找到符合條件的股票")
-    
-    # 從 Top 10 跳轉到單一分析
-    if 'selected_stock' in st.session_state and mode == "單一股票分析":
-        st.sidebar.text_input("股票代碼", st.session_state['selected_stock'], key='auto_fill')
 
 if __name__ == "__main__":
     main()
