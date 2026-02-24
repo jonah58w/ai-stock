@@ -1,5 +1,10 @@
-streamlit
-pandas
-numpy
-requests
-python-dateutil
+streamlit>=1.30.0
+yfinance>=0.2.36
+pandas>=2.1.0
+numpy>=1.24.0
+plotly>=5.18.0
+ta>=0.11.0
+requests>=2.31.0
+lxml>=5.0.0
+html5lib>=1.1
+streamlit-autorefresh>=1.0.1
