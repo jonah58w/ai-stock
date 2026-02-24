@@ -15,6 +15,15 @@ def calculate_indicators(df):
     if df is None or df.empty:
         raise ValueError("數據為空")
     
+    # ========== 處理 Yahoo Finance MultiIndex 問題 ==========
+    # Yahoo Finance 新版本的數據有 MultiIndex 列名
+    if isinstance(df.columns, pd.MultiIndex):
+        # 扁平化列名，只保留股票代碼層
+        df.columns = df.columns.droplevel(0)
+    elif len(df.columns) > 0 and isinstance(df.columns[0], tuple):
+        # 如果是 tuple 格式，取第一個元素
+        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+    
     # 檢查必需列
     required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
     missing_cols = [col for col in required_cols if col not in df.columns]
@@ -48,12 +57,12 @@ def calculate_indicators(df):
     df['KD_K'] = 100 * (df['Close'] - low_9) / (high_9 - low_9 + 1e-8)
     df['KD_D'] = df['KD_K'].rolling(window=3).mean()
     
-    # ATR (平均真實波幅)
+    # ATR (平均真實波幅) - 修復 MultiIndex 問題
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = np.max(ranges, axis=1)
+    true_range = ranges.max(axis=1)  # 使用 pandas 的 max 而非 numpy
     df['ATR'] = true_range.rolling(14).mean()
     df['ATR_Pct'] = (df['ATR'] / df['Close']) * 100
     
@@ -214,7 +223,7 @@ def calculate_precise_sell_points(df):
             '停損': round(stop_loss_sell, 2),
             '停利': 'N/A',
             '條件': f'價格跌破{support_level}（關鍵支撐）',
-            '突破確認': '待確認 (0分)',
+            '突破確認': '待確認 (0 分)',
             '共振確認': f'{calculate_resonance_score(df, "sell"):.1f}%',
             '優先級': '中' if adx > 40 else '高',
             '適用': '趨勢市',
