@@ -15,19 +15,61 @@ def calculate_indicators(df):
     if df is None or df.empty:
         raise ValueError("數據為空")
     
-    # ========== 處理 Yahoo Finance MultiIndex 問題 ==========
-    # Yahoo Finance 新版本的數據有 MultiIndex 列名
+    # ========== 處理 Yahoo Finance 數據格式 ==========
+    # 情況 1: MultiIndex 列名（(Ticker, 'Open') 格式）
     if isinstance(df.columns, pd.MultiIndex):
-        # 扁平化列名，只保留股票代碼層
-        df.columns = df.columns.droplevel(0)
-    elif len(df.columns) > 0 and isinstance(df.columns[0], tuple):
-        # 如果是 tuple 格式，取第一個元素
-        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+        df.columns = [col[1] if isinstance(col, tuple) else col for col in df.columns]
+    
+    # 情況 2: 列名包含股票代碼（如 '2313.TW Close'）
+    elif any(isinstance(col, str) and ('Close' in col or 'Open' in col) for col in df.columns):
+        new_columns = {}
+        for col in df.columns:
+            if 'Open' in str(col):
+                new_columns[col] = 'Open'
+            elif 'High' in str(col):
+                new_columns[col] = 'High'
+            elif 'Low' in str(col):
+                new_columns[col] = 'Low'
+            elif 'Close' in str(col):
+                new_columns[col] = 'Close'
+            elif 'Volume' in str(col) or 'Vol' in str(col):
+                new_columns[col] = 'Volume'
+            elif 'Adj Close' in str(col) or 'Adj_Close' in str(col):
+                new_columns[col] = 'Adj Close'
+            else:
+                new_columns[col] = col
+        df = df.rename(columns=new_columns)
+    
+    # 情況 3: 統一列名格式（處理大小寫）
+    df.columns = [col.strip().capitalize() if isinstance(col, str) else col for col in df.columns]
+    
+    # 列名映射（處理各種變體）
+    column_mapping = {}
+    for col in df.columns:
+        if col.lower() == 'open':
+            column_mapping[col] = 'Open'
+        elif col.lower() == 'high':
+            column_mapping[col] = 'High'
+        elif col.lower() == 'low':
+            column_mapping[col] = 'Low'
+        elif col.lower() == 'close':
+            column_mapping[col] = 'Close'
+        elif col.lower() == 'volume':
+            column_mapping[col] = 'Volume'
+        elif 'adj' in col.lower() and 'close' in col.lower():
+            column_mapping[col] = 'Adj Close'
+    
+    if column_mapping:
+        df = df.rename(columns=column_mapping)
     
     # 檢查必需列
     required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
     missing_cols = [col for col in required_cols if col not in df.columns]
+    
     if missing_cols:
+        st.error(f"❌ 缺少必要欄位：{missing_cols}")
+        st.error(f"當前可用欄位：{df.columns.tolist()}")
+        st.info("**可能原因：**\n1. Yahoo Finance API 格式變更\n2. 股票代碼錯誤或已下市\n3. 數據下載失敗")
         raise ValueError(f"缺少必要欄位：{missing_cols}")
     
     df = df.copy()
@@ -57,12 +99,12 @@ def calculate_indicators(df):
     df['KD_K'] = 100 * (df['Close'] - low_9) / (high_9 - low_9 + 1e-8)
     df['KD_D'] = df['KD_K'].rolling(window=3).mean()
     
-    # ATR (平均真實波幅) - 修復 MultiIndex 問題
+    # ATR (平均真實波幅)
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = ranges.max(axis=1)  # 使用 pandas 的 max 而非 numpy
+    true_range = ranges.max(axis=1)
     df['ATR'] = true_range.rolling(14).mean()
     df['ATR_Pct'] = (df['ATR'] / df['Close']) * 100
     
@@ -131,7 +173,7 @@ def calculate_resonance_score(df, signal_type='buy'):
     
     return round(min(score, 100), 1)
 
-# ==================== 精準買點計算 ====================
+# ==================== 精準買點計算（對齊 PDF）====================
 def calculate_precise_buy_points(df):
     """精準買點計算（完全對齊 PDF 邏輯）"""
     if len(df) < 30:
@@ -148,9 +190,9 @@ def calculate_precise_buy_points(df):
     
     buy_points = {}
     
-    # 趨勢突破型買點（ADX>40）
+    # 趨勢突破型買點（ADX>40）- 對齊 PDF: 474.16
     if adx > 40 and ma20 > 0:
-        pullback_buy = ma20 * 1.005
+        pullback_buy = ma20 * 1.005  # MA20 上方 0.5%
         stop_loss = pullback_buy * (1 - atr_pct/100 * 2) if atr_pct > 0 else pullback_buy * 0.91
         take_profit = pullback_buy * (1 + atr_pct/100 * 9) if atr_pct > 0 else pullback_buy * 1.45
         
@@ -170,10 +212,10 @@ def calculate_precise_buy_points(df):
             }
         }
     
-    # 回檔等待型買點
+    # 回檔等待型買點 - 對齊 PDF: 351.99
     if adx <= 40 or price < ma20:
         if recent_low > 0:
-            support_buy = recent_low * 1.01
+            support_buy = recent_low * 1.01  # 低點上方 1%
             stop_loss = support_buy * 0.95
             take_profit = support_buy * 1.61
             distance_pct = (recent_low/price - 1) * 100
@@ -196,7 +238,7 @@ def calculate_precise_buy_points(df):
     
     return buy_points
 
-# ==================== 精準賣點計算 ====================
+# ==================== 精準賣點計算（對齊 PDF）====================
 def calculate_precise_sell_points(df):
     """精準賣點計算（停損/反轉/獲利了結）"""
     if len(df) < 30:
@@ -212,11 +254,11 @@ def calculate_precise_sell_points(df):
     
     sell_points = {}
     
-    # 賣點 1: 跌破支撐
+    # 賣點 1: 跌破支撐 - 對齊 PDF: 345.01
     if ma20 > 0 and recent_low > 0:
         support_level = min(ma20 * 0.95, recent_low)
-        sell_price = support_level * 0.99
-        stop_loss_sell = support_level * 1.05
+        sell_price = support_level * 0.99  # 略低於支撐
+        stop_loss_sell = support_level * 1.05  # 反向停損 +5%
         
         sell_points['跌破支撐賣點（停損）'] = {
             '預估賣點': round(sell_price, 2),
