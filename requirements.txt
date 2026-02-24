@@ -1,6 +1,7 @@
-streamlit==1.32.0
-yfinance==0.2.37
-pandas==2.2.0
-numpy==1.26.4
-requests==2.31.0
-scikit-learn==1.3.2
+streamlit
+yfinance
+pandas
+numpy
+requests
+scikit-learn
+pandas-datareader
