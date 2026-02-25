@@ -1,11 +1,12 @@
 # ============================================================
-# AI Cycle Trading Engine PRO V6.1
+# AI Cycle Trading Engine PRO V6.2 (A + B + C + PB + Rating)
 # - Cloud-safe OHLCV normalization (fix ValueError/KeyError)
 # - TW/TWO fallback
-# - Multi-event Pivot + Resonance (Launch + Continuation)
-# - V6 Squeeze -> Expansion Breakout model
-# - NEW: Pullback Rebound Confirmation Module (回踩轉強確認)
-# - A + B + C (Events + Trade Plan + Backtest) + PB signals
+# - A: Recent major-turn + resonance events (Launch/Continuation/V6 Squeeze)
+# - B: Cycle stage + Trade plan (ATR pullback levels, risk line)
+# - PB: Pullback rebound confirmation (PB_ADD1 / PB_ADD2 / PB_EMA20)
+# - C: Event backtest (5/10/20D)
+# - V6.2: Buy Point Rating + Deviation status + Chase risk + Position suggestion
 # ============================================================
 
 import streamlit as st
@@ -19,6 +20,7 @@ warnings.filterwarnings("ignore")
 
 REQUIRED = ["Open", "High", "Low", "Close", "Volume"]
 
+
 # -----------------------------
 # 0) Robust OHLCV Normalizer
 # -----------------------------
@@ -28,6 +30,7 @@ def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.copy()
 
+    # Handle MultiIndex columns (common when yfinance returns grouped columns)
     if isinstance(df.columns, pd.MultiIndex):
         pick_level = None
         for lvl in range(df.columns.nlevels):
@@ -53,8 +56,11 @@ def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [canon(c) for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated(keep="first")]
 
+    # If Close missing but Adj Close exists, copy it
     if "Close" not in df.columns and "Adj Close" in df.columns:
         df["Close"] = df["Adj Close"]
+
+    # Try to salvage Close-like columns
     if "Close" not in df.columns:
         close_like = [c for c in df.columns if "close" in str(c).lower()]
         if close_like:
@@ -109,10 +115,12 @@ def download_data(code_or_symbol: str):
     if not s:
         return None, None
 
+    # If user already gives suffix, try directly
     if "." in s:
         df = _yf_download(s)
         return df, s
 
+    # Try TW then TWO
     for suffix in [".TW", ".TWO"]:
         sym = f"{s}{suffix}"
         df = _yf_download(sym)
@@ -134,22 +142,26 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
     df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
 
+    # Bollinger
     df["BB_mid"] = df["SMA20"]
     df["BB_std"] = df["Close"].rolling(20).std()
     df["BB_upper"] = df["BB_mid"] + df["BB_std"] * 2
     df["BB_lower"] = df["BB_mid"] - df["BB_std"] * 2
     df["BB_width"] = (df["BB_upper"] - df["BB_lower"]) / (df["BB_mid"] + 1e-9) * 100  # %
 
+    # MACD
     exp1 = df["Close"].ewm(span=12, adjust=False).mean()
     exp2 = df["Close"].ewm(span=26, adjust=False).mean()
     df["MACD_DIF"] = exp1 - exp2
     df["MACD_Signal"] = df["MACD_DIF"].ewm(span=9, adjust=False).mean()
 
+    # KD
     low_9 = df["Low"].rolling(9).min()
     high_9 = df["High"].rolling(9).max()
     df["KD_K"] = 100 * (df["Close"] - low_9) / (high_9 - low_9 + 1e-9)
     df["KD_D"] = df["KD_K"].rolling(3).mean()
 
+    # ATR
     tr1 = df["High"] - df["Low"]
     tr2 = (df["High"] - df["Close"].shift()).abs()
     tr3 = (df["Low"] - df["Close"].shift()).abs()
@@ -157,6 +169,7 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["ATR"] = tr.rolling(14).mean()
     df["ATR_pct"] = (df["ATR"] / (df["Close"] + 1e-9)) * 100
 
+    # ADX
     plus_dm = df["High"].diff()
     minus_dm = -df["Low"].diff()
     plus_dm[plus_dm < 0] = 0
@@ -167,8 +180,11 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     dx = 100 * (plus_di - minus_di).abs() / ((plus_di + minus_di) + 1e-9)
     df["ADX"] = dx.rolling(14).mean()
 
+    # Volume
     df["VOL_5"] = df["Volume"].rolling(5).mean()
     df["VOL_10"] = df["Volume"].rolling(10).mean()
+
+    # 20D highest high (for breakout)
     df["HH20"] = df["High"].rolling(20).max()
 
     return df
@@ -200,7 +216,7 @@ def detect_stage(df: pd.DataFrame) -> str:
 
 
 # -----------------------------
-# 4) V6 Squeeze & MA Convergence
+# 4) V6 Squeeze & MA Convergence helpers
 # -----------------------------
 def is_squeeze(df: pd.DataFrame, i: int, squeeze_lookback=120, squeeze_pct=20) -> bool:
     if i < squeeze_lookback:
@@ -251,6 +267,7 @@ def volume_surge(df: pd.DataFrame, i: int, mult=1.2) -> bool:
 def is_launch_resonance(df: pd.DataFrame, i: int) -> bool:
     if i <= 1:
         return False
+
     macd_cross = (df["MACD_DIF"].iloc[i-1] < df["MACD_Signal"].iloc[i-1]) and (df["MACD_DIF"].iloc[i] > df["MACD_Signal"].iloc[i])
     kd_cross = (df["KD_K"].iloc[i-1] < df["KD_D"].iloc[i-1]) and (df["KD_K"].iloc[i] > df["KD_D"].iloc[i])
 
@@ -303,7 +320,7 @@ def is_v6_squeeze_breakout(df: pd.DataFrame, i: int,
 
 
 # -----------------------------
-# 6) Pivot Detection (fix scalar issue)
+# 6) Pivot Detection (safe scalar usage)
 # -----------------------------
 def detect_pivot_lows(df: pd.DataFrame, left=3, right=3, atr_mult=0.8):
     if len(df) < left + right + 5:
@@ -316,21 +333,24 @@ def detect_pivot_lows(df: pd.DataFrame, left=3, right=3, atr_mult=0.8):
     pivots = []
     for i in range(left, len(df) - right):
         low_i = float(lows[i])
-        if np.isnan(low_i) or np.isnan(atr[i]):
+        atr_i = float(atr[i]) if not np.isnan(atr[i]) else np.nan
+        if np.isnan(low_i) or np.isnan(atr_i):
             continue
+
         seg = lows[i-left:i+right+1]
         if np.isnan(seg).all():
             continue
+
         if low_i == float(np.nanmin(seg)):
             bounce = float(np.nanmax(highs[i:i+right+1]) - low_i)
-            if bounce >= float(atr_mult * atr[i]):
+            if bounce >= float(atr_mult * atr_i):
                 pivots.append(i)
 
     return pivots
 
 
 # -----------------------------
-# 7) Find Recent Events (multi events)
+# 7) Find Recent Events (A)
 # -----------------------------
 def find_recent_events(
     df: pd.DataFrame,
@@ -385,8 +405,11 @@ def find_recent_events(
                 })
                 break
 
+    # prioritization: squeeze > launch > continuation on same day
     priority = {"V6_SQUEEZE_BREAKOUT": 0, "LAUNCH_RESONANCE": 1, "CONTINUATION_RESONANCE": 2}
     events.sort(key=lambda x: (x["SignalDate"], priority.get(x["Type"], 9)))
+
+    # deduplicate by SignalDate (keep best priority)
     dedup = []
     seen = set()
     for e in events[::-1]:
@@ -452,9 +475,9 @@ def build_trade_plan(df: pd.DataFrame) -> dict:
     elif stage == "啟動期":
         action = "🚀 啟動期：可較積極（先 40%），回踩不破再加碼"
         plan = [
-            "第一筆：啟動共振成立 → 40%",
-            f"第二筆：回踩 0.5ATR（{pb05}）轉強 → 30%",
-            f"第三筆：回踩 EMA20（{ema20:.2f}）站回 → 30%",
+            "第一筆：共振成立 → 20~40%（依評級）",
+            f"第二筆：回踩 0.5ATR（{pb05}）轉強 → 再加",
+            f"第三筆：回踩 EMA20（{ema20:.2f}）站回 → 再加",
             f"防守：跌破風險線（{risk}）視為趨勢破壞",
         ]
     elif stage == "末端期":
@@ -486,12 +509,8 @@ def build_trade_plan(df: pd.DataFrame) -> dict:
 
 
 # ============================================================
-# 10) NEW MODULE: Pullback Rebound Confirmation (回踩轉強確認)
+# 10) PB MODULE: Pullback Rebound Confirmation (回踩轉強確認)
 # ============================================================
-
-def _within(x, target, tol):
-    return abs(x - target) <= tol
-
 def pullback_rebound_signals(
     df: pd.DataFrame,
     event: dict,
@@ -508,7 +527,6 @@ def pullback_rebound_signals(
       2) 收盤轉強（收紅 或 收盤 > 前一日收盤）
       3) 多頭續航（MACD_DIF > MACD_Signal）
       4) 量能略放大（Volume > VOL_5 * vol_mult）
-    回傳：signals list，每筆包含 Date/Type/Price/Reason
     """
     if event is None or "SignalDate" not in event:
         return []
@@ -522,8 +540,8 @@ def pullback_rebound_signals(
         return []
 
     signals = []
+
     latest = df.iloc[-1]
-    # 用「當下 ATR」當容忍帶基準（也可改成事件當天 ATR）
     atr_now = float(latest["ATR"]) if not np.isnan(latest["ATR"]) else 0.0
     if atr_now <= 0:
         return []
@@ -535,7 +553,6 @@ def pullback_rebound_signals(
 
     tol = pb_tol_atr * atr_now
 
-    # 掃描事件後的K棒，找第一個符合 PB_ADD1/PB_ADD2/PB_EMA20 的日期
     found = {"PB_ADD1": False, "PB_ADD2": False, "PB_EMA20": False}
 
     for i in range(start_i + 1, len(df)):
@@ -551,14 +568,13 @@ def pullback_rebound_signals(
         macd_ok = bool(row["MACD_DIF"] > row["MACD_Signal"])
         vol_ok = (vol5 > 0) and (vol >= vol5 * vol_mult)
 
-        # 轉強：收紅 或 收盤 > 前收
         rebound_ok = (close >= open_) or (close > float(prev["Close"]))
 
         def confirm(tag, target_level):
             if found[tag]:
                 return
-            touched = (low <= target_level + tol) and (low >= target_level - tol or low <= target_level + tol)
-            # touched 的本質：low 掃到容忍帶
+            # "touched": low enters the tolerance band
+            touched = (low <= target_level + tol) and (low >= target_level - tol)
             if touched and rebound_ok and macd_ok and vol_ok:
                 found[tag] = True
                 reasons = {
@@ -586,8 +602,123 @@ def pullback_rebound_signals(
     return signals
 
 
+# ============================================================
+# 11) V6.2 BUY POINT RATING ENGINE
+# ============================================================
+def buy_point_rating(df: pd.DataFrame, plan: dict, used_event: dict | None = None):
+    """
+    Output:
+      - rating: A/B/C/D
+      - deviation: Close vs EMA20 (%)
+      - deviation_status: 低風險/正常/偏高/危險
+      - chase_risk: 低/中/高
+      - suggest_position: 0/10/20/40%
+      - max_drawdown_pct: (risk_line vs current price) %
+      - advice: 一句話建議
+    """
+    latest = df.iloc[-1]
+    price = float(latest["Close"])
+    ema20 = float(latest["EMA20"])
+    adx = float(latest["ADX"]) if not np.isnan(latest["ADX"]) else 0.0
+
+    # 乖離
+    deviation = (price / (ema20 + 1e-9) - 1) * 100
+    if deviation < 5:
+        dev_status, dev_score = "低風險", 3
+    elif deviation < 8:
+        dev_status, dev_score = "正常", 2
+    elif deviation < 12:
+        dev_status, dev_score = "偏高", 1
+    else:
+        dev_status, dev_score = "危險", 0
+
+    # 趨勢分數 (ADX)
+    if adx > 35:
+        trend_score = 3
+    elif adx > 20:
+        trend_score = 2
+    else:
+        trend_score = 1
+
+    # 回撤風險 (risk line)
+    risk_line = float(plan["risk"])
+    drawdown = (risk_line / (price + 1e-9) - 1) * 100  # negative
+    dd_abs = abs(drawdown)
+    if dd_abs < 6:
+        risk_score = 3
+    elif dd_abs < 9:
+        risk_score = 2
+    else:
+        risk_score = 1
+
+    # 追價風險：乖離 + 是否剛突破 BB_upper
+    # (剛突破當天追價風險上升)
+    bb_upper = float(latest["BB_upper"]) if not np.isnan(latest["BB_upper"]) else np.nan
+    broke_upper_today = False
+    if len(df) >= 2 and not np.isnan(bb_upper):
+        prev = df.iloc[-2]
+        prev_upper = float(prev["BB_upper"]) if not np.isnan(prev["BB_upper"]) else np.nan
+        if not np.isnan(prev_upper):
+            broke_upper_today = (price > bb_upper) and (float(prev["Close"]) <= prev_upper)
+
+    if deviation > 10 or broke_upper_today:
+        chase_risk = "高"
+    elif deviation > 6:
+        chase_risk = "中"
+    else:
+        chase_risk = "低"
+
+    total_score = dev_score + trend_score + risk_score
+
+    # event boost: if there is a recent event selected, slightly improve rating ceiling
+    event_boost = 0
+    if used_event is not None:
+        if used_event.get("Type") == "V6_SQUEEZE_BREAKOUT":
+            event_boost = 1
+        elif used_event.get("Type") in ["LAUNCH_RESONANCE", "CONTINUATION_RESONANCE"]:
+            event_boost = 0.5
+
+    score2 = total_score + event_boost
+
+    if score2 >= 8:
+        rating = "A"
+        position = "40%"
+    elif score2 >= 6:
+        rating = "B"
+        position = "20%"
+    elif score2 >= 4:
+        rating = "C"
+        position = "10%"
+    else:
+        rating = "D"
+        position = "0%"
+
+    # advice
+    if rating in ["A", "B"] and chase_risk != "高":
+        advice = "可參與（以計畫分批），回踩轉強再加碼。"
+    elif rating in ["B", "C"] and chase_risk == "高":
+        advice = "偏追價，建議只試單，小心回檔；等 PB 回踩轉強再加碼。"
+    elif rating == "D":
+        advice = "先觀望，等事件/回踩轉強確認再出手。"
+    else:
+        advice = "可小倉，避免追滿；PB 訊號出現再加碼。"
+
+    return {
+        "rating": rating,
+        "deviation": round(deviation, 2),
+        "deviation_status": dev_status,
+        "chase_risk": chase_risk,
+        "suggest_position": position,
+        "max_drawdown_pct": round(drawdown, 2),
+        "adx": round(adx, 1),
+        "total_score": round(score2, 2),
+        "broke_upper_today": broke_upper_today,
+        "advice": advice
+    }
+
+
 # -----------------------------
-# 11) Plot (add PB markers)
+# 12) Plot (events + PB markers)
 # -----------------------------
 def plot_chart(df: pd.DataFrame, event=None, pb_signals=None):
     fig = make_subplots(rows=1, cols=1)
@@ -600,6 +731,7 @@ def plot_chart(df: pd.DataFrame, event=None, pb_signals=None):
     fig.add_trace(go.Scatter(x=df.index, y=df["BB_upper"], name="BB Upper"))
     fig.add_trace(go.Scatter(x=df.index, y=df["BB_lower"], name="BB Lower"))
 
+    # Event markers
     if event is not None:
         pdate = event["PivotDate"]
         sdate = event["SignalDate"]
@@ -638,13 +770,13 @@ def plot_chart(df: pd.DataFrame, event=None, pb_signals=None):
 
 
 # -----------------------------
-# 12) UI
+# 13) UI
 # -----------------------------
 def main():
-    st.set_page_config(page_title="AI Cycle Trading Engine PRO V6.1", layout="wide")
-    st.title("🚀 AI Cycle Trading Engine PRO V6.1（含 回踩轉強確認模組）")
+    st.set_page_config(page_title="AI Cycle Trading Engine PRO V6.2", layout="wide")
+    st.title("🚀 AI Cycle Trading Engine PRO V6.2（A+B+C + 回踩轉強 + 買點評級）")
 
-    code = st.text_input("股票代碼", "6187").strip()
+    code = st.text_input("股票代碼", "2317").strip()
 
     with st.sidebar:
         st.header("⚙️ 掃描參數")
@@ -654,7 +786,7 @@ def main():
         max_events = st.slider("顯示最近幾次事件", 3, 15, 8, 1)
 
         st.divider()
-        st.subheader("事件引擎開關")
+        st.subheader("事件引擎開關（A）")
         enable_squeeze = st.checkbox("V6 壓縮爆發 (A3)", value=True)
         enable_launch = st.checkbox("啟動共振 (A1)", value=True)
         enable_cont = st.checkbox("延續共振 (A2)", value=True)
@@ -667,11 +799,13 @@ def main():
         vol_mult = st.slider("爆發量能倍數(相對VOL5)", 1.0, 2.5, 1.3, 0.1)
 
         st.divider()
-        st.subheader("🆕 回踩轉強確認參數")
+        st.subheader("🧲 回踩轉強確認（PB）")
         pb_tol_atr = st.slider("回踩容忍帶（ATR倍數）", 0.10, 0.60, 0.25, 0.05)
         pb_vol_mult = st.slider("回踩轉強量能倍數(相對VOL5)", 1.00, 1.60, 1.05, 0.05)
 
         st.divider()
+        st.subheader("🧠 V6.2 評級設定")
+        st.caption("參考常見交易風控：短線 3–5%｜波段 5–8%｜趨勢 8–12%")
         show_debug = st.checkbox("顯示 Debug 欄位", value=False)
 
     with st.spinner("下載資料中..."):
@@ -718,7 +852,6 @@ def main():
 
     # A
     st.subheader("🚀 最近主要轉折共振事件（A）")
-
     events = find_recent_events(
         df,
         lookback_bars=lookback_bars,
@@ -742,28 +875,24 @@ def main():
     df_ev = pd.DataFrame(events)
     df_ev["SignalDate"] = df_ev["SignalDate"].astype(str)
     df_ev["PivotDate"] = df_ev["PivotDate"].astype(str)
-    with st.expander("查看最近事件列表（不再失真）", expanded=True):
+    with st.expander("查看最近事件列表（避免『很久以前啟動日』的失真）", expanded=True):
         st.dataframe(df_ev[["Type", "PivotDate", "SignalDate", "Entry", "BB_Upper", "HH20_prev", "VOLx"]].round(2), use_container_width=True)
 
-    options = [
-        f"{e['SignalDate'].date()} | {e['Type']} | Entry {e['Entry']:.2f}"
-        for e in events
-    ]
+    options = [f"{e['SignalDate'].date()} | {e['Type']} | Entry {e['Entry']:.2f}" for e in events]
     sel = st.selectbox("選擇要檢視的事件（用來判斷後續回踩加碼點）", options, index=0)
-    idx = options.index(sel)
-    chosen = events[idx]
+    chosen = events[options.index(sel)]
 
     entry = float(chosen["Entry"])
     now = float(df["Close"].iloc[-1])
-    gain = (now / entry - 1) * 100
+    gain = (now / (entry + 1e-9) - 1) * 100
 
     st.success(
         f"事件：{chosen['Type']} ｜ Pivot：{chosen['PivotDate'].date()} ｜ Signal：{chosen['SignalDate'].date()} ｜ "
         f"Entry：{entry:.2f} ｜ 至今：{gain:.2f}% ｜ VOLx={chosen['VOLx']:.2f}x"
     )
 
-    # 🆕 PB module
-    st.subheader("🧲 回踩轉強確認（加碼買點偵測）")
+    # PB
+    st.subheader("🧲 回踩轉強確認（PB：加碼買點偵測）")
     pb = pullback_rebound_signals(df, chosen, pb_tol_atr=pb_tol_atr, vol_mult=pb_vol_mult)
 
     if not pb:
@@ -780,7 +909,25 @@ def main():
         } for x in pb])
         st.dataframe(pb_df, use_container_width=True)
 
-    # C
+    # V6.2 Rating
+    st.subheader("🧠 V6.2 自動買點評級 + 乖離狀況 + 追價風險")
+    rating = buy_point_rating(df, plan, used_event=chosen)
+
+    r1, r2, r3, r4 = st.columns(4)
+    rating_text_map = {"A": "A（低風險強趨勢）", "B": "B（可試單）", "C": "C（小倉）", "D": "D（觀望）"}
+    r1.metric("買點評級", rating_text_map.get(rating["rating"], rating["rating"]))
+    r2.metric("乖離（vs EMA20）", f"{rating['deviation']}%  ({rating['deviation_status']})")
+    r3.metric("追價風險", rating["chase_risk"])
+    r4.metric("建議倉位", rating["suggest_position"])
+
+    st.info(
+        f"✅ 一句話建議：{rating['advice']}\n\n"
+        f"最大回撤風險（以風險線衡量）：{rating['max_drawdown_pct']}%\n"
+        f"合理加碼區：0.5ATR {plan['pb05']}｜1ATR {plan['pb10']}｜EMA20 {plan['ema20']}\n"
+        f"（若追價風險高，建議只試單；PB 訊號出現再加碼）"
+    )
+
+    # C Backtest
     st.subheader("📊 事件回測（C）")
     bt = backtest_events(df, events, horizon=(5, 10, 20))
     if bt.empty:
@@ -807,7 +954,7 @@ def main():
             st.dataframe(bt.round(2), use_container_width=True)
 
     # Chart
-    st.subheader("📈 K線 + 均線 + 布林 + 事件標記 + 回踩加碼標記")
+    st.subheader("📈 K線 + 均線 + 布林 + 事件標記 + PB 加碼標記")
     df_plot = df.tail(lookback_bars)
     fig = plot_chart(df_plot, event=chosen, pb_signals=pb)
     st.plotly_chart(fig, use_container_width=True)
