@@ -1,6 +1,6 @@
 # ==================================================
-# AI Cycle Trading Engine PRO v5
-# "Recent Major Pivot Resonance" Edition (A+B+C)
+# AI Cycle Trading Engine PRO v5.1
+# 最近主要轉折共振版 + TW/TWO fallback + Cloud-safe
 # ==================================================
 
 import streamlit as st
@@ -13,7 +13,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 REQUIRED = ["Open", "High", "Low", "Close", "Volume"]
-
 
 # -----------------------------
 # 0) Robust OHLCV Normalizer (Cloud 防爆)
@@ -82,18 +81,52 @@ def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # -----------------------------
-# 1) Download
+# 1) Download with TW/TWO fallback (最重要修正點)
 # -----------------------------
-def download_data(symbol: str) -> pd.DataFrame:
-    return yf.download(
-        symbol,
-        period="3y",
-        interval="1d",
-        progress=False,
-        auto_adjust=False,
-        group_by="column",
-        threads=False,
-    )
+def _yf_download(symbol: str) -> pd.DataFrame:
+    try:
+        df = yf.download(
+            symbol,
+            period="3y",
+            interval="1d",
+            progress=False,
+            auto_adjust=False,
+            group_by="column",
+            threads=False,
+        )
+        if df is not None and not df.empty:
+            return df
+    except Exception:
+        return None
+    return None
+
+
+def download_data(code_or_symbol: str):
+    """
+    - 若使用者輸入 6187 -> 依序嘗試 6187.TW / 6187.TWO
+    - 若使用者輸入 6187.TWO -> 直接抓
+    """
+    s = (code_or_symbol or "").strip()
+    if not s:
+        return None, None
+
+    if "." in s:
+        df = _yf_download(s)
+        return df, s
+
+    # 先 TW
+    sym_tw = f"{s}.TW"
+    df = _yf_download(sym_tw)
+    if df is not None:
+        return df, sym_tw
+
+    # 再 TWO
+    sym_two = f"{s}.TWO"
+    df = _yf_download(sym_two)
+    if df is not None:
+        return df, sym_two
+
+    return None, None
 
 
 # -----------------------------
@@ -175,13 +208,8 @@ def detect_stage(df: pd.DataFrame) -> str:
 
 # -----------------------------
 # 4) Pivot Detection (最近主要轉折點)
-#    用分形 pivot + ATR 過濾，避免抓到小震盪
 # -----------------------------
 def detect_pivots(df: pd.DataFrame, left=3, right=3, atr_mult=1.0):
-    """
-    回傳 pivot_low_indices, pivot_high_indices
-    atr_mult：轉折幅度至少要 >= atr_mult * ATR 才算主要 pivot
-    """
     lows = df["Low"].values
     highs = df["High"].values
     atr = df["ATR"].values
@@ -192,7 +220,6 @@ def detect_pivots(df: pd.DataFrame, left=3, right=3, atr_mult=1.0):
     for i in range(left, len(df) - right):
         # pivot low
         if lows[i] == np.min(lows[i-left:i+right+1]):
-            # 過濾：後續右側有反彈幅度 >= atr_mult*ATR
             bounce = (np.max(highs[i:i+right+1]) - lows[i])
             if not np.isnan(atr[i]) and bounce >= atr_mult * atr[i]:
                 pivot_low.append(i)
@@ -226,14 +253,15 @@ def is_resonance_breakout(df: pd.DataFrame, i: int) -> bool:
 
 # -----------------------------
 # 6) Major Pivot Resonance Event (A)
-#    定義：最近的 pivot low 之後 N 天內出現共振突破 => 這個共振才算「最近主要轉折」
 # -----------------------------
-def find_recent_major_turning_resonance(df: pd.DataFrame, lookback_bars=120, confirm_window=30, left=3, right=3, atr_mult=1.0):
-    """
-    在最近 lookback_bars 內找 pivot_low
-    pivot_low 後 confirm_window 天內若有 resonance breakout，取最近一個事件
-    回傳 dict 或 None
-    """
+def find_recent_major_turning_resonance(
+    df: pd.DataFrame,
+    lookback_bars=120,
+    confirm_window=30,
+    left=3,
+    right=3,
+    atr_mult=1.0
+):
     if len(df) < 80:
         return None
 
@@ -248,25 +276,26 @@ def find_recent_major_turning_resonance(df: pd.DataFrame, lookback_bars=120, con
         for i in range(p + 1, end + 1):
             if is_resonance_breakout(df, i):
                 events.append({"pivot_i": p, "signal_i": i})
-                break  # pivot 對應到第一個共振突破即可
+                break
 
     if not events:
         return None
 
-    # 取最近一個 signal_i（最近主要轉折共振）
     events.sort(key=lambda x: x["signal_i"])
-    e = events[-1]
-    return e
+    return events[-1]
 
 
 # -----------------------------
 # 7) Backtest for pivot-resonance (C)
 # -----------------------------
-def backtest_pivot_resonance(df: pd.DataFrame, lookback_bars=756, confirm_window=30, left=3, right=3, atr_mult=1.0):
-    """
-    用同樣邏輯把歷史事件掃出來，計算 5/10 日報酬與成功率
-    lookback_bars：回測範圍（756 約 3 年交易日）
-    """
+def backtest_pivot_resonance(
+    df: pd.DataFrame,
+    lookback_bars=756,
+    confirm_window=30,
+    left=3,
+    right=3,
+    atr_mult=1.0
+):
     if len(df) < 120:
         return pd.DataFrame()
 
@@ -285,7 +314,6 @@ def backtest_pivot_resonance(df: pd.DataFrame, lookback_bars=756, confirm_window
                 break
         if sig is None:
             continue
-
         if sig + 10 >= len(df2):
             continue
 
@@ -345,7 +373,7 @@ def build_trade_plan(df: pd.DataFrame) -> dict:
             f"風險線：{risk}",
         ]
     else:
-        action = "🟦 盤整期：等待主要轉折 + 共振成立（不要用趨勢追價邏輯）"
+        action = "🟦 盤整期：等待主要轉折 + 共振成立"
         plan = [
             "等待：先出現 pivot 轉折，再出現共振突破（MACD/KD/均線/BB/量能/ADX）",
         ]
@@ -368,27 +396,31 @@ def build_trade_plan(df: pd.DataFrame) -> dict:
 # 9) UI
 # -----------------------------
 def main():
-    st.set_page_config(page_title="AI Cycle Trading Engine PRO v5", layout="wide")
-    st.title("🚀 AI Cycle Trading Engine PRO v5（最近主要轉折共振版）")
+    st.set_page_config(page_title="AI Cycle Trading Engine PRO v5.1", layout="wide")
+    st.title("🚀 AI Cycle Trading Engine PRO v5.1（最近主要轉折共振版）")
 
-    code = st.text_input("股票代碼", "2313").strip()
-    symbol = code if (".TW" in code.upper() or ".TWO" in code.upper()) else f"{code}.TW"
-    st.caption(f"完整代碼：{symbol}")
+    code = st.text_input("股票代碼", "6187").strip()
 
-    # Parameters (你之後可調)
     with st.sidebar:
         st.header("⚙️ 共振/轉折參數")
         lookback_bars = st.slider("只看最近幾根（日K）", 60, 300, 120, 10)
         confirm_window = st.slider("Pivot 後幾天內找共振", 10, 60, 30, 5)
         atr_mult = st.slider("主要轉折強度（ATR倍數）", 0.5, 3.0, 1.0, 0.1)
+        show_debug = st.checkbox("顯示 Debug 欄位", value=False)
 
-    df_raw = download_data(symbol)
+    with st.spinner("下載資料中..."):
+        df_raw, used_symbol = download_data(code)
+
     if df_raw is None or df_raw.empty:
-        st.error("❌ 無法下載資料（yfinance 可能被擋 / 代碼錯誤）")
+        st.error("❌ 無法下載資料（yfinance 可能被擋 / 代碼錯誤 / Yahoo 暫時不可用）")
+        st.info("建議：\n- 換一支股票測試（如 2330）\n- 或輸入完整尾碼（例如 6187.TWO）\n- 若 Cloud 常被擋，可改用 TWSE/TPEX 官方資料源（我可幫你升級）")
         st.stop()
 
-    with st.expander("🔍 Debug：yfinance 原始欄位"):
-        st.write(df_raw.columns)
+    st.caption(f"✅ 成功取得資料：{used_symbol}")
+
+    if show_debug:
+        with st.expander("🔍 Debug：yfinance 原始欄位"):
+            st.write(df_raw.columns)
 
     try:
         df = calculate_indicators(df_raw).dropna().copy()
@@ -432,10 +464,11 @@ def main():
         atr_mult=atr_mult
     )
 
+    pivot_i = None
+    sig_i = None
+
     if event is None:
-        st.info("最近區間沒有找到『主要轉折 + 共振突破』事件（你可調大 lookback 或降低 ATR 倍數）。")
-        pivot_i = None
-        sig_i = None
+        st.info("最近區間沒有找到『主要轉折 + 共振突破』事件（可調大 lookback 或降低 ATR 倍數）。")
     else:
         pivot_i = event["pivot_i"]
         sig_i = event["signal_i"]
@@ -453,11 +486,12 @@ def main():
     st.subheader("📊 主要轉折共振回測（C）")
     bt = backtest_pivot_resonance(
         df,
-        lookback_bars=756,  # ~3 years
+        lookback_bars=756,
         confirm_window=confirm_window,
         left=3, right=3,
         atr_mult=atr_mult
     )
+
     if not bt.empty:
         avg5 = bt["Return5D(%)"].mean()
         avg10 = bt["Return10D(%)"].mean()
@@ -481,7 +515,6 @@ def main():
     fig.add_trace(go.Scatter(x=df.index, y=df["BB_upper"], name="BB Upper"))
     fig.add_trace(go.Scatter(x=df.index, y=df["BB_lower"], name="BB Lower"))
 
-    # mark pivot / signal
     if pivot_i is not None:
         fig.add_trace(go.Scatter(
             x=[df.index[pivot_i]],
