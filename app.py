@@ -1,6 +1,6 @@
 # ==================================================
-# AI Cycle Trading Engine PRO v5.1
-# 最近主要轉折共振版 + TW/TWO fallback + Cloud-safe
+# AI Cycle Trading Engine PRO v5.2
+# 最近主要轉折共振版（Launch + Continuation）+ TW/TWO fallback + Cloud-safe
 # ==================================================
 
 import streamlit as st
@@ -13,6 +13,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 REQUIRED = ["Open", "High", "Low", "Close", "Volume"]
+
 
 # -----------------------------
 # 0) Robust OHLCV Normalizer (Cloud 防爆)
@@ -81,7 +82,7 @@ def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # -----------------------------
-# 1) Download with TW/TWO fallback (最重要修正點)
+# 1) Download with TW/TWO fallback
 # -----------------------------
 def _yf_download(symbol: str) -> pd.DataFrame:
     try:
@@ -103,8 +104,8 @@ def _yf_download(symbol: str) -> pd.DataFrame:
 
 def download_data(code_or_symbol: str):
     """
-    - 若使用者輸入 6187 -> 依序嘗試 6187.TW / 6187.TWO
-    - 若使用者輸入 6187.TWO -> 直接抓
+    - 若輸入 6187 -> 依序嘗試 6187.TW / 6187.TWO
+    - 若輸入 6187.TWO -> 直接抓
     """
     s = (code_or_symbol or "").strip()
     if not s:
@@ -114,13 +115,11 @@ def download_data(code_or_symbol: str):
         df = _yf_download(s)
         return df, s
 
-    # 先 TW
     sym_tw = f"{s}.TW"
     df = _yf_download(sym_tw)
     if df is not None:
         return df, sym_tw
 
-    # 再 TWO
     sym_two = f"{s}.TWO"
     df = _yf_download(sym_two)
     if df is not None:
@@ -183,11 +182,14 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["VOL_5"] = df["Volume"].rolling(5).mean()
     df["VOL_10"] = df["Volume"].rolling(10).mean()
 
+    # extra: 20D high
+    df["HH20"] = df["High"].rolling(20).max()
+
     return df
 
 
 # -----------------------------
-# 3) Cycle Stage (B)
+# 3) Cycle Stage (B) - 微調：乖離很大但ADX低，先視為「高位盤整/加速前段」
 # -----------------------------
 def detect_stage(df: pd.DataFrame) -> str:
     if len(df) < 60:
@@ -197,6 +199,8 @@ def detect_stage(df: pd.DataFrame) -> str:
     deviation = (latest["Close"] / (latest["EMA20"] + 1e-9) - 1) * 100
     ma_bull = (latest["SMA5"] > latest["SMA10"] > latest["SMA20"])
 
+    if deviation > 22 and latest["Close"] > latest["BB_upper"]:
+        return "高位盤整/加速前段"
     if deviation > 20 and latest["KD_K"] > 90 and latest["ADX"] > 55:
         return "末端期"
     if ma_bull and latest["ADX"] >= 40 and 12 <= deviation <= 20:
@@ -218,13 +222,11 @@ def detect_pivots(df: pd.DataFrame, left=3, right=3, atr_mult=1.0):
     pivot_high = []
 
     for i in range(left, len(df) - right):
-        # pivot low
         if lows[i] == np.min(lows[i-left:i+right+1]):
             bounce = (np.max(highs[i:i+right+1]) - lows[i])
             if not np.isnan(atr[i]) and bounce >= atr_mult * atr[i]:
                 pivot_low.append(i)
 
-        # pivot high
         if highs[i] == np.max(highs[i-left:i+right+1]):
             drop = (highs[i] - np.min(lows[i:i+right+1]))
             if not np.isnan(atr[i]) and drop >= atr_mult * atr[i]:
@@ -234,21 +236,74 @@ def detect_pivots(df: pd.DataFrame, left=3, right=3, atr_mult=1.0):
 
 
 # -----------------------------
-# 5) Resonance Confirmation (你定義的共振)
+# 5) Resonance (A1 啟動共振 / A2 延續共振)
 # -----------------------------
-def is_resonance_breakout(df: pd.DataFrame, i: int) -> bool:
+def _first_break_bb_upper(df: pd.DataFrame, i: int) -> bool:
+    # 今天突破上軌、昨天不在上軌外（抓你說的“那一下”）
+    if i <= 0:
+        return False
+    return (df["Close"].iloc[i] > df["BB_upper"].iloc[i]) and (df["Close"].iloc[i-1] <= df["BB_upper"].iloc[i-1])
+
+
+def _break_20d_high(df: pd.DataFrame, i: int) -> bool:
+    if i <= 0:
+        return False
+    prev_hh20 = df["HH20"].iloc[i-1]
+    if np.isnan(prev_hh20):
+        return False
+    return df["Close"].iloc[i] > prev_hh20
+
+
+def is_launch_resonance(df: pd.DataFrame, i: int) -> bool:
+    """
+    啟動共振：當天金叉（MACD+KD）+ 多頭均線 + 突破 + 量能 + ADX轉強
+    """
     if i <= 1:
         return False
 
     macd_cross = (df["MACD_DIF"].iloc[i-1] < df["MACD_Signal"].iloc[i-1]) and (df["MACD_DIF"].iloc[i] > df["MACD_Signal"].iloc[i])
     kd_cross = (df["KD_K"].iloc[i-1] < df["KD_D"].iloc[i-1]) and (df["KD_K"].iloc[i] > df["KD_D"].iloc[i])
+
+    ma_bull = (df["SMA5"].iloc[i] > df["SMA10"].iloc[i] > df["SMA20"].iloc[i]) and (df["SMA20"].iloc[i] >= df["SMA20"].iloc[i-1])
+    breakout = _first_break_bb_upper(df, i) or _break_20d_high(df, i)
+
+    vol_ok = df["Volume"].iloc[i] > df["VOL_5"].iloc[i]  # 基本量能
+    adx_ok = (df["ADX"].iloc[i] > df["ADX"].iloc[i-1]) and (df["ADX"].iloc[i] >= 18)
+
+    return bool(macd_cross and kd_cross and ma_bull and breakout and vol_ok and adx_ok)
+
+
+def is_continuation_resonance(df: pd.DataFrame, i: int) -> bool:
+    """
+    延續共振：不要求當天金叉，用來抓「你說的突破壓力/上軌、轉折向上」
+    條件：
+    - MACD DIF > Signal 且 DIF上升
+    - KD K > D 且 K上升（允許已金叉）
+    - 均線多頭 或 均線匯集後SMA20上彎
+    - 觸發：第一次突破上軌 或 突破20日新高
+    - 量能：> VOL_5 * 1.1（更像突破）
+    - ADX：不再要求很高，允許 15+ 且上升/或近3日均值上升
+    """
+    if i <= 2:
+        return False
+
+    macd_bull = (df["MACD_DIF"].iloc[i] > df["MACD_Signal"].iloc[i]) and (df["MACD_DIF"].iloc[i] > df["MACD_DIF"].iloc[i-1])
+    kd_bull = (df["KD_K"].iloc[i] > df["KD_D"].iloc[i]) and (df["KD_K"].iloc[i] > df["KD_K"].iloc[i-1])
+
     ma_bull = (df["SMA5"].iloc[i] > df["SMA10"].iloc[i] > df["SMA20"].iloc[i])
+    ma20_up = df["SMA20"].iloc[i] >= df["SMA20"].iloc[i-1]
+    ma_ok = ma_bull or ma20_up
 
-    bb_break = df["Close"].iloc[i] > df["BB_upper"].iloc[i]
-    vol_ok = df["Volume"].iloc[i] > df["VOL_5"].iloc[i]
-    adx_rise = df["ADX"].iloc[i] > df["ADX"].iloc[i-1]
+    breakout = _first_break_bb_upper(df, i) or _break_20d_high(df, i)
 
-    return bool(macd_cross and kd_cross and ma_bull and bb_break and vol_ok and adx_rise)
+    vol_ok = df["Volume"].iloc[i] > (df["VOL_5"].iloc[i] * 1.1)
+
+    adx_now = df["ADX"].iloc[i]
+    adx_ok = False
+    if not np.isnan(adx_now):
+        adx_ok = (adx_now >= 15 and adx_now > df["ADX"].iloc[i-1]) or (adx_now >= 18)
+
+    return bool(macd_bull and kd_bull and ma_ok and breakout and vol_ok and adx_ok)
 
 
 # -----------------------------
@@ -262,6 +317,12 @@ def find_recent_major_turning_resonance(
     right=3,
     atr_mult=1.0
 ):
+    """
+    在最近 lookback_bars 內找 pivot_low
+    pivot_low 後 confirm_window 天內若有：
+      - Launch resonance 或 Continuation resonance
+    取最近一個事件，並回傳 type
+    """
     if len(df) < 80:
         return None
 
@@ -274,8 +335,11 @@ def find_recent_major_turning_resonance(
     for p in piv_lows:
         end = min(len(df) - 1, p + confirm_window)
         for i in range(p + 1, end + 1):
-            if is_resonance_breakout(df, i):
-                events.append({"pivot_i": p, "signal_i": i})
+            if is_launch_resonance(df, i):
+                events.append({"pivot_i": p, "signal_i": i, "type": "Launch(啟動共振)"})
+                break
+            if is_continuation_resonance(df, i):
+                events.append({"pivot_i": p, "signal_i": i, "type": "Continuation(延續共振/突破共振)"})
                 break
 
     if not events:
@@ -286,7 +350,7 @@ def find_recent_major_turning_resonance(
 
 
 # -----------------------------
-# 7) Backtest for pivot-resonance (C)
+# 7) Backtest (C)
 # -----------------------------
 def backtest_pivot_resonance(
     df: pd.DataFrame,
@@ -308,10 +372,18 @@ def backtest_pivot_resonance(
     for p in piv_lows:
         end = min(len(df2) - 1, p + confirm_window)
         sig = None
+        sig_type = None
+
         for i in range(p + 1, end + 1):
-            if is_resonance_breakout(df2, i):
+            if is_launch_resonance(df2, i):
                 sig = i
+                sig_type = "Launch"
                 break
+            if is_continuation_resonance(df2, i):
+                sig = i
+                sig_type = "Continuation"
+                break
+
         if sig is None:
             continue
         if sig + 10 >= len(df2):
@@ -322,6 +394,7 @@ def backtest_pivot_resonance(
         ret10 = (float(df2["Close"].iloc[sig + 10]) / entry - 1) * 100
 
         rows.append({
+            "Type": sig_type,
             "PivotDate": df2.index[p],
             "SignalDate": df2.index[sig],
             "EntryPrice": entry,
@@ -349,21 +422,21 @@ def build_trade_plan(df: pd.DataFrame) -> dict:
     pb10 = round(price - 1.0 * atr, 2)
     risk = round(ema20 - 1.0 * atr, 2)
 
-    if stage == "啟動期":
+    if stage in ["加速期", "高位盤整/加速前段"]:
+        action = "🔥 趨勢轉強/突破期：以『突破小倉 + 回踩加碼』為主（避免一次追滿）"
+        plan = [
+            "試單：出現『最近主要轉折共振（A）』可買 10~20%",
+            f"加碼1：回踩 0.5ATR（{pb05}）轉強再加",
+            f"加碼2：回踩 1ATR（{pb10}）不破再加",
+            f"防守：跌破風險線（{risk}）視為趨勢假設失效",
+        ]
+    elif stage == "啟動期":
         action = "🚀 啟動期：可積極（先 40%），回踩不破再加碼"
         plan = [
             "第一筆：最近主要轉折共振成立 → 40%",
             f"第二筆：回踩 0.5ATR（{pb05}）轉強 → 30%",
             f"第三筆：回踩 EMA20（{ema20:.2f}）站回 → 30%",
             f"防守：跌破風險線（{risk}）視為趨勢破壞"
-        ]
-    elif stage == "加速期":
-        action = "🔥 加速期：不重倉追價；用『小倉突破 + 回踩加碼』"
-        plan = [
-            "試單：主要轉折共振成立可買 10~20%",
-            f"加碼1：回踩 0.5ATR（{pb05}）轉強再加",
-            f"加碼2：回踩 1ATR（{pb10}）不破再加",
-            f"防守：跌破風險線（{risk}）視為趨勢假設失效",
         ]
     elif stage == "末端期":
         action = "⚠️ 末端期：禁止追高；以減碼/移動停利為主"
@@ -396,15 +469,15 @@ def build_trade_plan(df: pd.DataFrame) -> dict:
 # 9) UI
 # -----------------------------
 def main():
-    st.set_page_config(page_title="AI Cycle Trading Engine PRO v5.1", layout="wide")
-    st.title("🚀 AI Cycle Trading Engine PRO v5.1（最近主要轉折共振版）")
+    st.set_page_config(page_title="AI Cycle Trading Engine PRO v5.2", layout="wide")
+    st.title("🚀 AI Cycle Trading Engine PRO v5.2（最近主要轉折共振：啟動+延續）")
 
     code = st.text_input("股票代碼", "6187").strip()
 
     with st.sidebar:
         st.header("⚙️ 共振/轉折參數")
         lookback_bars = st.slider("只看最近幾根（日K）", 60, 300, 120, 10)
-        confirm_window = st.slider("Pivot 後幾天內找共振", 10, 60, 30, 5)
+        confirm_window = st.slider("Pivot 後幾天內找共振", 10, 80, 45, 5)
         atr_mult = st.slider("主要轉折強度（ATR倍數）", 0.5, 3.0, 1.0, 0.1)
         show_debug = st.checkbox("顯示 Debug 欄位", value=False)
 
@@ -468,15 +541,18 @@ def main():
     sig_i = None
 
     if event is None:
-        st.info("最近區間沒有找到『主要轉折 + 共振突破』事件（可調大 lookback 或降低 ATR 倍數）。")
+        st.info("最近區間沒有找到『主要轉折 + 共振突破』事件（可調大 lookback 或降低 ATR 倍數 / 拉大確認窗口）。")
     else:
         pivot_i = event["pivot_i"]
         sig_i = event["signal_i"]
+        sig_type = event["type"]
+
         entry_price = float(df["Close"].iloc[sig_i])
         now_price = float(df["Close"].iloc[-1])
         gain = (now_price / entry_price - 1) * 100
 
         st.success(
+            f"事件類型：{sig_type} ｜ "
             f"主要轉折日：{df.index[pivot_i].date()} ｜ "
             f"共振突破日：{df.index[sig_i].date()} ｜ "
             f"啟動價：{entry_price:.2f} ｜ 至今漲幅：{gain:.2f}%"
@@ -499,6 +575,7 @@ def main():
         st.write(f"- 5日平均報酬：**{avg5:.2f}%**")
         st.write(f"- 10日平均報酬：**{avg10:.2f}%**")
         st.write(f"- 成功率（10日>0）：**{win10:.2f}%**")
+
         with st.expander("查看回測明細"):
             st.dataframe(bt.round(2), use_container_width=True)
     else:
