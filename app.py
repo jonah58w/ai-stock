@@ -4,8 +4,7 @@ import io
 import time
 import math
 import datetime as dt
-from dataclasses import dataclass
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, List, Dict
 
 from dateutil.relativedelta import relativedelta
 import numpy as np
@@ -27,7 +26,6 @@ HEADERS_TWSE = {
     "Referer": "https://www.twse.com.tw/",
     "Connection": "keep-alive",
 }
-
 HEADERS_TPEX = {
     "User-Agent": "Mozilla/5.0",
     "Accept": "application/json,text/plain,*/*",
@@ -35,7 +33,6 @@ HEADERS_TPEX = {
     "Referer": "https://www.tpex.org.tw/",
     "Connection": "keep-alive",
 }
-
 HEADERS_GENERIC = {
     "User-Agent": "Mozilla/5.0",
     "Accept": "*/*",
@@ -78,6 +75,7 @@ def _safe_int(x):
     return int(v)
 
 def _parse_roc_date(s: str):
+    # 114/02/03
     p = str(s).split("/")
     if len(p) != 3:
         return pd.NaT
@@ -105,7 +103,6 @@ def _dedup_sort(df: pd.DataFrame) -> pd.DataFrame:
 def _req(url: str, headers: dict, retry: int = 3, sleep: float = 0.7):
     """
     回傳: (response or None, debug_dict)
-    debug_dict 會包含 status / snippet / exception
     """
     last_dbg = {"url": url, "status": None, "snippet": None, "exception": None}
     for i in range(retry):
@@ -123,12 +120,9 @@ def _req(url: str, headers: dict, retry: int = 3, sleep: float = 0.7):
 
 
 # =========================
-# Diagnostics
+# Network test
 # =========================
 def net_test() -> pd.DataFrame:
-    """
-    測試 Streamlit Cloud 是否能連到幾個常見目標
-    """
     targets = [
         ("TWSE", "https://www.twse.com.tw/"),
         ("TPEX", "https://www.tpex.org.tw/"),
@@ -147,80 +141,108 @@ def net_test() -> pd.DataFrame:
 
 
 # =========================
-# Source A: TWSE CSV
+# Source A: TWSE CSV (上市)  ✅已修正：找表頭行再解析（避免 TOO_SHORT）
 # =========================
 def _twse_csv_month(code: str, yyyymm: str):
     date_str = f"{yyyymm}01"
     url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=csv&date={date_str}&stockNo={code}"
     r, dbg = _req(url, HEADERS_TWSE, retry=3)
     if not r:
-        return None, {"source": "TWSE_CSV", "result": "FAIL", **dbg}
-
-    text = r.text or ""
-    # 有些情況會回 HTML 或提示字串
-    if ("很抱歉" in text) or ("查詢日期" in text and "資料" in text and "不存在" in text):
-        return None, {"source": "TWSE_CSV", "result": "EMPTY", **dbg}
-
-    # 取含引號的行（TWSE CSV 常有雜訊）
-    lines = [ln for ln in text.splitlines() if ln and ('"' in ln)]
-    if len(lines) < 3:
-        return None, {"source": "TWSE_CSV", "result": "TOO_SHORT", **dbg}
+        return None, {"source": "TWSE_CSV", "result": "FAIL", **dbg, "yyyymm": yyyymm}
 
     try:
-        df = pd.read_csv(io.StringIO("\n".join(lines)))
-    except Exception as e:
-        return None, {"source": "TWSE_CSV", "result": "PARSE_ERR", "exception": str(e)[:200], **dbg}
+        r.encoding = "utf-8"
+    except:
+        pass
 
-    df.columns = [str(c).replace('"', "").strip() for c in df.columns]
+    text = r.text or ""
+    if not text.strip():
+        return None, {"source": "TWSE_CSV", "result": "EMPTY_TEXT", **dbg, "yyyymm": yyyymm}
+
+    raw_lines = [ln.strip().strip("\ufeff") for ln in text.splitlines() if ln.strip()]
+    if len(raw_lines) < 3:
+        return None, {"source": "TWSE_CSV", "result": "TOO_SHORT_TEXT", **dbg, "yyyymm": yyyymm}
+
+    # ✅ 找到表頭行（不依賴引號）
+    header_idx = None
+    for i, ln in enumerate(raw_lines):
+        if ln.startswith("日期,") and (("成交股數" in ln) or ("開盤價" in ln) or ("收盤價" in ln)):
+            header_idx = i
+            break
+    if header_idx is None:
+        for i, ln in enumerate(raw_lines):
+            if ("日期" in ln) and ("成交股數" in ln) and ("," in ln):
+                header_idx = i
+                break
+
+    if header_idx is None:
+        return None, {
+            "source": "TWSE_CSV",
+            "result": "NO_HEADER_FOUND",
+            "preview": raw_lines[:6],
+            **dbg,
+            "yyyymm": yyyymm,
+        }
+
+    csv_text = "\n".join(raw_lines[header_idx:])
+
+    try:
+        df = pd.read_csv(io.StringIO(csv_text), engine="python")
+    except Exception as e:
+        return None, {"source": "TWSE_CSV", "result": "PARSE_ERR", "exception": str(e)[:200], **dbg, "yyyymm": yyyymm}
+
+    df.columns = [str(c).strip().replace('"', "") for c in df.columns]
     colmap = {"日期": "Date", "開盤價": "Open", "最高價": "High", "最低價": "Low", "收盤價": "Close", "成交股數": "Volume"}
     df = df.rename(columns=colmap)
 
     if "Date" not in df.columns:
-        return None, {"source": "TWSE_CSV", "result": "NO_DATE_COL", **dbg}
+        return None, {"source": "TWSE_CSV", "result": "NO_DATE_COL", "cols": list(df.columns)[:12], **dbg, "yyyymm": yyyymm}
 
     df["Date"] = df["Date"].apply(_parse_roc_date)
     df = df.set_index("Date")
 
     for c in ["Open", "High", "Low", "Close"]:
-        df[c] = df[c].astype(str).str.replace(",", "").apply(_safe_float)
-    df["Volume"] = df["Volume"].astype(str).str.replace(",", "").apply(_safe_int)
+        if c in df.columns:
+            df[c] = df[c].astype(str).str.replace(",", "").apply(_safe_float)
+    if "Volume" in df.columns:
+        df["Volume"] = df["Volume"].astype(str).str.replace(",", "").apply(_safe_int)
 
     df = _ensure_ohlcv(df)
     if df is None:
-        return None, {"source": "TWSE_CSV", "result": "NO_OHLCV", **dbg}
+        return None, {"source": "TWSE_CSV", "result": "NO_OHLCV", "cols": list(df.columns)[:12], **dbg, "yyyymm": yyyymm}
 
-    return df, {"source": "TWSE_CSV", "result": "OK", **dbg}
+    return df, {"source": "TWSE_CSV", "result": "OK", **dbg, "yyyymm": yyyymm}
 
 
 # =========================
-# Source B: TWSE JSON
+# Source B: TWSE JSON (上市)
 # =========================
 def _twse_json_month(code: str, yyyymm: str):
     date_str = f"{yyyymm}01"
     url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date_str}&stockNo={code}"
     r, dbg = _req(url, HEADERS_TWSE, retry=3)
     if not r:
-        return None, {"source": "TWSE_JSON", "result": "FAIL", **dbg}
+        return None, {"source": "TWSE_JSON", "result": "FAIL", **dbg, "yyyymm": yyyymm}
 
     try:
         j = r.json()
     except Exception as e:
-        return None, {"source": "TWSE_JSON", "result": "JSON_PARSE_ERR", "exception": str(e)[:200], **dbg}
+        return None, {"source": "TWSE_JSON", "result": "JSON_PARSE_ERR", "exception": str(e)[:200], **dbg, "yyyymm": yyyymm}
 
     if j.get("stat") != "OK":
-        return None, {"source": "TWSE_JSON", "result": f"NOT_OK({j.get('stat')})", **dbg}
+        return None, {"source": "TWSE_JSON", "result": f"NOT_OK({j.get('stat')})", **dbg, "yyyymm": yyyymm}
 
     fields = j.get("fields", [])
     data = j.get("data", [])
     if not data:
-        return None, {"source": "TWSE_JSON", "result": "EMPTY", **dbg}
+        return None, {"source": "TWSE_JSON", "result": "EMPTY", **dbg, "yyyymm": yyyymm}
 
     df = pd.DataFrame(data, columns=fields)
     colmap = {"日期": "Date", "開盤價": "Open", "最高價": "High", "最低價": "Low", "收盤價": "Close", "成交股數": "Volume"}
     df = df.rename(columns=colmap)
 
     if "Date" not in df.columns:
-        return None, {"source": "TWSE_JSON", "result": "NO_DATE_COL", **dbg}
+        return None, {"source": "TWSE_JSON", "result": "NO_DATE_COL", "cols": list(df.columns)[:12], **dbg, "yyyymm": yyyymm}
 
     df["Date"] = df["Date"].apply(_parse_roc_date)
     df = df.set_index("Date")
@@ -230,13 +252,13 @@ def _twse_json_month(code: str, yyyymm: str):
 
     df = _ensure_ohlcv(df)
     if df is None:
-        return None, {"source": "TWSE_JSON", "result": "NO_OHLCV", **dbg}
+        return None, {"source": "TWSE_JSON", "result": "NO_OHLCV", "cols": list(df.columns)[:12], **dbg, "yyyymm": yyyymm}
 
-    return df, {"source": "TWSE_JSON", "result": "OK", **dbg}
+    return df, {"source": "TWSE_JSON", "result": "OK", **dbg, "yyyymm": yyyymm}
 
 
 # =========================
-# Source C: TPEX JSON
+# Source C: TPEX JSON (上櫃)
 # =========================
 def _tpex_json_month(code: str, yyyymm: str):
     y = int(yyyymm[:4])
@@ -245,16 +267,16 @@ def _tpex_json_month(code: str, yyyymm: str):
     url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?d={d_param}&stkno={code}"
     r, dbg = _req(url, HEADERS_TPEX, retry=3)
     if not r:
-        return None, {"source": "TPEX_JSON", "result": "FAIL", **dbg}
+        return None, {"source": "TPEX_JSON", "result": "FAIL", **dbg, "yyyymm": yyyymm}
 
     try:
         j = r.json()
     except Exception as e:
-        return None, {"source": "TPEX_JSON", "result": "JSON_PARSE_ERR", "exception": str(e)[:200], **dbg}
+        return None, {"source": "TPEX_JSON", "result": "JSON_PARSE_ERR", "exception": str(e)[:200], **dbg, "yyyymm": yyyymm}
 
     data = j.get("aaData") or j.get("data") or []
     if not data:
-        return None, {"source": "TPEX_JSON", "result": "EMPTY", **dbg}
+        return None, {"source": "TPEX_JSON", "result": "EMPTY", **dbg, "yyyymm": yyyymm}
 
     rows = []
     for row in data:
@@ -275,18 +297,18 @@ def _tpex_json_month(code: str, yyyymm: str):
         })
 
     if not rows:
-        return None, {"source": "TPEX_JSON", "result": "ROWS_EMPTY", **dbg}
+        return None, {"source": "TPEX_JSON", "result": "ROWS_EMPTY", **dbg, "yyyymm": yyyymm}
 
     df = pd.DataFrame(rows).set_index("Date")
     df = _ensure_ohlcv(df)
     if df is None:
-        return None, {"source": "TPEX_JSON", "result": "NO_OHLCV", **dbg}
+        return None, {"source": "TPEX_JSON", "result": "NO_OHLCV", **dbg, "yyyymm": yyyymm}
 
-    return df, {"source": "TPEX_JSON", "result": "OK", **dbg}
+    return df, {"source": "TPEX_JSON", "result": "OK", **dbg, "yyyymm": yyyymm}
 
 
 # =========================
-# Source D: yfinance
+# Source D: yfinance (備援)
 # =========================
 def _yahoo_yfinance(code: str, period: str):
     try:
@@ -319,7 +341,7 @@ def _yahoo_yfinance(code: str, period: str):
 
 
 # =========================
-# Source E: Stooq
+# Source E: Stooq (備援)
 # =========================
 def _stooq(code: str):
     try:
@@ -350,10 +372,18 @@ def _stooq(code: str):
 
 
 # =========================
-# Ultimate master downloader (returns trace)
+# Ultimate master downloader (with trace)
 # =========================
 @st.cache_data(ttl=600)
 def download_data_with_trace(code: str, period: str = "6mo", fixed_months: int = 14):
+    """
+    順序：
+    1) TWSE CSV（月，已修正解析）
+    2) TWSE JSON（月）
+    3) TPEX JSON（月）
+    4) yfinance（period）
+    5) stooq（近似 period）
+    """
     code = _norm_code(code)
     months_keep = _period_to_months(period)
 
@@ -368,7 +398,6 @@ def download_data_with_trace(code: str, period: str = "6mo", fixed_months: int =
     parts = []
     for yyyymm in month_list:
         dfm, info = _twse_csv_month(code, yyyymm)
-        info = {**info, "yyyymm": yyyymm}
         trace.append(info)
         if dfm is not None and not dfm.empty:
             parts.append(dfm)
@@ -384,7 +413,6 @@ def download_data_with_trace(code: str, period: str = "6mo", fixed_months: int =
     parts = []
     for yyyymm in month_list:
         dfm, info = _twse_json_month(code, yyyymm)
-        info = {**info, "yyyymm": yyyymm}
         trace.append(info)
         if dfm is not None and not dfm.empty:
             parts.append(dfm)
@@ -400,7 +428,6 @@ def download_data_with_trace(code: str, period: str = "6mo", fixed_months: int =
     parts = []
     for yyyymm in month_list:
         dfm, info = _tpex_json_month(code, yyyymm)
-        info = {**info, "yyyymm": yyyymm}
         trace.append(info)
         if dfm is not None and not dfm.empty:
             parts.append(dfm)
@@ -470,9 +497,19 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["BB_UP"] = ma20 + 2 * std20
     df["BB_LOW"] = ma20 - 2 * std20
 
+    # Volume MA
     df["VOL_MA20"] = df["Volume"].rolling(20).mean()
+
+    # Support/Resistance (60)
     df["SUPPORT"] = df["Low"].rolling(60).min()
     df["RESIST"] = df["High"].rolling(60).max()
+
+    # ATR(14)（停損參考用）
+    high_low = df["High"] - df["Low"]
+    high_close = (df["High"] - df["Close"].shift()).abs()
+    low_close = (df["Low"] - df["Close"].shift()).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df["ATR14"] = tr.rolling(14).mean()
 
     return df
 
@@ -552,7 +589,7 @@ def future_buy_sell_zones(df: pd.DataFrame):
     return buy_zone, buy_reason, sell_zone, sell_reason
 
 
-def scan_top10(stock_pool: list[str], period: str) -> pd.DataFrame:
+def scan_top10(stock_pool: List[str], period: str) -> pd.DataFrame:
     rows = []
     for code in stock_pool:
         df, src, _trace = download_data_with_trace(code, period=period)
@@ -581,28 +618,27 @@ with st.sidebar.expander("🧪 網路測試（建議先按一次）", expanded=F
 
 if mode == "單一股票分析":
     code = _norm_code(st.text_input("請輸入股票代號", "2330"))
-
     df, src, trace = download_data_with_trace(code, period=period)
 
     if df is None:
         st.error("❌ 無法取得資料（所有備援來源都失敗）。")
-        # 失敗時「自動顯示診斷表」：不用勾 debug 也會出現
         st.subheader("🧩 逐路診斷（哪一路失敗、為什麼）")
         st.dataframe(pd.DataFrame(trace), use_container_width=True)
-
-        if show_debug:
-            st.caption("提示：若看到 NOT_INSTALLED，代表 requirements.txt 沒裝到；若看到 status=403/429，代表被擋；若 EXCEPTION，多為 DNS/SSL/timeout。")
         st.stop()
 
     df = calc_indicators(df)
-    score = ai_score(df)
     last = float(df["Close"].iloc[-1])
+    score = ai_score(df)
+
+    atr = df["ATR14"].iloc[-1]
+    stop_loss = None if pd.isna(atr) else (last - 2 * float(atr))
 
     st.success(f"✅ 取得資料成功 | 代號: {code} | Source: {src}")
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     c1.metric("AI 共振分數", f"{score}/100")
     c2.metric("目前價格", round(last, 2))
+    c3.metric("ATR 停損參考", "-" if stop_loss is None else round(stop_loss, 2))
 
     buy_zone, buy_reason, sell_zone, sell_reason = future_buy_sell_zones(df)
 
@@ -633,8 +669,6 @@ if mode == "單一股票分析":
 
 else:
     st.caption("Top10 掃描器：先用小池測試（避免全市場在 Cloud 超時）。")
-
-    # 你可以把 pool 換成你常用的 20~50 檔（先別全市場）
     stock_pool = ["2330", "2317", "2303", "2454", "2382", "3037", "8046", "6274", "4967"]
 
     result = scan_top10(stock_pool, period=period)
