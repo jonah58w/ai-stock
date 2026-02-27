@@ -4,7 +4,7 @@ import io
 import time
 import math
 import datetime as dt
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 from dateutil.relativedelta import relativedelta
 import numpy as np
@@ -75,7 +75,6 @@ def _safe_int(x):
     return int(v)
 
 def _parse_roc_date(s: str):
-    # 114/02/03
     p = str(s).split("/")
     if len(p) != 3:
         return pd.NaT
@@ -101,9 +100,6 @@ def _dedup_sort(df: pd.DataFrame) -> pd.DataFrame:
     return df[~df.index.duplicated(keep="last")]
 
 def _req(url: str, headers: dict, retry: int = 3, sleep: float = 0.7):
-    """
-    回傳: (response or None, debug_dict)
-    """
     last_dbg = {"url": url, "status": None, "snippet": None, "exception": None}
     for i in range(retry):
         try:
@@ -117,6 +113,17 @@ def _req(url: str, headers: dict, retry: int = 3, sleep: float = 0.7):
             last_dbg["exception"] = str(e)[:200]
             time.sleep(sleep * (i + 1))
     return None, last_dbg
+
+def _pct(a: float, b: float) -> Optional[float]:
+    # (a-b)/b
+    if a is None or b is None:
+        return None
+    try:
+        if b == 0:
+            return None
+        return (a - b) / b * 100.0
+    except:
+        return None
 
 
 # =========================
@@ -141,7 +148,7 @@ def net_test() -> pd.DataFrame:
 
 
 # =========================
-# Source A: TWSE CSV (上市)  ✅已修正：找表頭行再解析（避免 TOO_SHORT）
+# Source A: TWSE CSV (上市) ✅已修正：找表頭行再解析（避免 TOO_SHORT）
 # =========================
 def _twse_csv_month(code: str, yyyymm: str):
     date_str = f"{yyyymm}01"
@@ -163,7 +170,6 @@ def _twse_csv_month(code: str, yyyymm: str):
     if len(raw_lines) < 3:
         return None, {"source": "TWSE_CSV", "result": "TOO_SHORT_TEXT", **dbg, "yyyymm": yyyymm}
 
-    # ✅ 找到表頭行（不依賴引號）
     header_idx = None
     for i, ln in enumerate(raw_lines):
         if ln.startswith("日期,") and (("成交股數" in ln) or ("開盤價" in ln) or ("收盤價" in ln)):
@@ -376,14 +382,6 @@ def _stooq(code: str):
 # =========================
 @st.cache_data(ttl=600)
 def download_data_with_trace(code: str, period: str = "6mo", fixed_months: int = 14):
-    """
-    順序：
-    1) TWSE CSV（月，已修正解析）
-    2) TWSE JSON（月）
-    3) TPEX JSON（月）
-    4) yfinance（period）
-    5) stooq（近似 period）
-    """
     code = _norm_code(code)
     months_keep = _period_to_months(period)
 
@@ -459,7 +457,7 @@ def download_data_with_trace(code: str, period: str = "6mo", fixed_months: int =
 
 
 # =========================
-# Indicators & signals
+# Indicators
 # =========================
 def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -504,7 +502,7 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["SUPPORT"] = df["Low"].rolling(60).min()
     df["RESIST"] = df["High"].rolling(60).max()
 
-    # ATR(14)（停損參考用）
+    # ATR(14)
     high_low = df["High"] - df["Low"]
     high_close = (df["High"] - df["Close"].shift()).abs()
     low_close = (df["Low"] - df["Close"].shift()).abs()
@@ -513,6 +511,10 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
+
+# =========================
+# Scoring + zones + NOW action
+# =========================
 def ai_score(df: pd.DataFrame) -> int:
     latest = df.iloc[-1]
     score = 0
@@ -532,7 +534,7 @@ def ai_score(df: pd.DataFrame) -> int:
         score += 15
     return int(min(score, 100))
 
-def future_buy_sell_zones(df: pd.DataFrame):
+def future_buy_sell_zones(df: pd.DataFrame) -> Tuple[Optional[Tuple[float,float]], List[str], Optional[Tuple[float,float]], List[str]]:
     latest = df.iloc[-1]
     close = float(latest["Close"])
 
@@ -588,7 +590,123 @@ def future_buy_sell_zones(df: pd.DataFrame):
 
     return buy_zone, buy_reason, sell_zone, sell_reason
 
+def now_action(df: pd.DataFrame):
+    """
+    回傳：
+      action: "買點" / "賣點" / "觀望"
+      confidence: 0~100
+      reasons: list[str]
+      dist_to_buy_pct, dist_to_sell_pct: 目前價 到 buy_zone/sell_zone 中心的距離(%)
+      in_buy_zone, in_sell_zone: bool
+    """
+    latest = df.iloc[-1]
+    close = float(latest["Close"])
+    score = ai_score(df)
 
+    buy_zone, buy_reason, sell_zone, sell_reason = future_buy_sell_zones(df)
+
+    in_buy = False
+    in_sell = False
+    dist_buy = None
+    dist_sell = None
+
+    if buy_zone:
+        lo, hi = buy_zone
+        in_buy = (close >= lo) and (close <= hi)
+        center = (lo + hi) / 2.0
+        dist_buy = _pct(close, center)
+
+    if sell_zone:
+        lo, hi = sell_zone
+        in_sell = (close >= lo) and (close <= hi)
+        center = (lo + hi) / 2.0
+        dist_sell = _pct(close, center)
+
+    # 共振條件（用來做「當下判斷」）
+    rsi = float(latest["RSI"]) if pd.notna(latest["RSI"]) else None
+    k = float(latest["K"]) if pd.notna(latest["K"]) else None
+    d = float(latest["D"]) if pd.notna(latest["D"]) else None
+    macd = float(latest["MACD"]) if pd.notna(latest["MACD"]) else None
+    vol_ma = float(latest["VOL_MA20"]) if pd.notna(latest["VOL_MA20"]) else None
+    vol = float(latest["Volume"]) if pd.notna(latest["Volume"]) else None
+
+    buy_votes = 0
+    sell_votes = 0
+    reasons = []
+
+    # 買方條件
+    if in_buy:
+        buy_votes += 2
+        reasons.append("價格已進入買點區間")
+    if rsi is not None and rsi <= 40:
+        buy_votes += 1
+        reasons.append("RSI低檔")
+    if k is not None and d is not None and k <= 25 and d <= 30:
+        buy_votes += 1
+        reasons.append("KD低檔")
+    if macd is not None and macd > 0:
+        buy_votes += 1
+        reasons.append("MACD轉強(>0)")
+    if vol is not None and vol_ma is not None and vol > vol_ma:
+        buy_votes += 1
+        reasons.append("量能放大")
+
+    # 賣方條件
+    if in_sell:
+        sell_votes += 2
+        reasons.append("價格已進入賣點區間")
+    if rsi is not None and rsi >= 65:
+        sell_votes += 1
+        reasons.append("RSI高檔")
+    if k is not None and d is not None and k >= 75 and d >= 70:
+        sell_votes += 1
+        reasons.append("KD高檔")
+    if macd is not None and macd < 0:
+        sell_votes += 1
+        reasons.append("MACD轉弱(<0)")
+
+    # 決策邏輯（避免亂跳）
+    if (sell_votes >= 3) and (sell_votes > buy_votes):
+        action = "賣點"
+        confidence = min(95, 55 + sell_votes * 10 + (max(0, (100 - score)) // 10))
+    elif (buy_votes >= 3) and (buy_votes > sell_votes):
+        action = "買點"
+        confidence = min(95, 55 + buy_votes * 10 + (score // 10))
+    else:
+        action = "觀望"
+        confidence = 40 + min(30, abs(buy_votes - sell_votes) * 5)
+
+    # 理由精簡：買/賣 只留對應
+    if action == "買點":
+        reasons = [r for r in reasons if ("買" in r) or ("低檔" in r) or ("轉強" in r) or ("量能" in r)]
+        if buy_reason:
+            reasons += [f"（區間條件）{' / '.join(buy_reason)}"]
+    elif action == "賣點":
+        reasons = [r for r in reasons if ("賣" in r) or ("高檔" in r) or ("轉弱" in r)]
+        if sell_reason:
+            reasons += [f"（區間條件）{' / '.join(sell_reason)}"]
+    else:
+        # 觀望：只留中性
+        reasons = ["條件尚未形成明確共振（等待價格進入區間/或指標翻轉）"]
+
+    return {
+        "action": action,
+        "confidence": int(confidence),
+        "reasons": reasons[:4],  # 不要太長
+        "score": score,
+        "close": close,
+        "buy_zone": buy_zone,
+        "sell_zone": sell_zone,
+        "dist_to_buy_pct": dist_buy,
+        "dist_to_sell_pct": dist_sell,
+        "in_buy_zone": in_buy,
+        "in_sell_zone": in_sell,
+    }
+
+
+# =========================
+# Top10
+# =========================
 def scan_top10(stock_pool: List[str], period: str) -> pd.DataFrame:
     rows = []
     for code in stock_pool:
@@ -596,11 +714,44 @@ def scan_top10(stock_pool: List[str], period: str) -> pd.DataFrame:
         if df is None or len(df) < 80:
             continue
         df = calc_indicators(df)
-        rows.append({"股票": _norm_code(code), "來源": src, "AI分數": ai_score(df)})
-    out = pd.DataFrame(rows, columns=["股票", "來源", "AI分數"])
+        info = now_action(df)
+
+        bz = info["buy_zone"]
+        sz = info["sell_zone"]
+        bz_s = "-" if not bz else f"{bz[0]:.2f}~{bz[1]:.2f}"
+        sz_s = "-" if not sz else f"{sz[0]:.2f}~{sz[1]:.2f}"
+
+        # Top10更好用：顯示距離買/賣區(%)（越小越接近）
+        d_buy = info["dist_to_buy_pct"]
+        d_sell = info["dist_to_sell_pct"]
+
+        rows.append({
+            "股票": _norm_code(code),
+            "Close": round(info["close"], 2),
+            "當下建議": info["action"],
+            "信心": f'{info["confidence"]}%',
+            "BuyZone": bz_s,
+            "距離買區%": None if d_buy is None else round(d_buy, 2),
+            "SellZone": sz_s,
+            "距離賣區%": None if d_sell is None else round(d_sell, 2),
+            "AI分數": info["score"],
+            "來源": src,
+        })
+
+    out = pd.DataFrame(rows)
     if out.empty:
         return out
-    return out.sort_values("AI分數", ascending=False).head(10)
+
+    # 排序：先把「買點」排前面，再比 AI分數，再比距離買區絕對值（越小越接近）
+    def action_rank(x):
+        return {"買點": 0, "觀望": 1, "賣點": 2}.get(str(x), 9)
+
+    out["__rank"] = out["當下建議"].apply(action_rank)
+    out["__abs_buy"] = out["距離買區%"].abs().fillna(9999)
+
+    out = out.sort_values(["__rank", "AI分數", "__abs_buy"], ascending=[True, False, True])
+    out = out.drop(columns=["__rank", "__abs_buy"])
+    return out.head(10)
 
 
 # =========================
@@ -627,40 +778,55 @@ if mode == "單一股票分析":
         st.stop()
 
     df = calc_indicators(df)
-    last = float(df["Close"].iloc[-1])
-    score = ai_score(df)
+    info = now_action(df)
 
-    atr = df["ATR14"].iloc[-1]
-    stop_loss = None if pd.isna(atr) else (last - 2 * float(atr))
-
+    # Header
     st.success(f"✅ 取得資料成功 | 代號: {code} | Source: {src}")
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("AI 共振分數", f"{score}/100")
-    c2.metric("目前價格", round(last, 2))
-    c3.metric("ATR 停損參考", "-" if stop_loss is None else round(stop_loss, 2))
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("當下建議", info["action"])
+    c2.metric("信心", f'{info["confidence"]}%')
+    c3.metric("目前價格", round(info["close"], 2))
+    c4.metric("AI 共振分數", f'{info["score"]}/100')
 
-    buy_zone, buy_reason, sell_zone, sell_reason = future_buy_sell_zones(df)
+    # 明確可判讀的買賣點資訊
+    st.subheader("📌 當下是否為買點/賣點？（可操作判斷）")
+    if info["action"] == "買點":
+        st.info("✅ **偏買**：目前條件達成共振（或已進入買區），可分批佈局 / 等回測確認。")
+    elif info["action"] == "賣點":
+        st.warning("✅ **偏賣**：目前條件偏高檔/壓力，適合減碼或等待回檔。")
+    else:
+        st.write("⏳ **觀望**：條件尚未明確，等待價格進入區間或指標翻轉。")
 
-    st.subheader("📌 未來預估買賣點（只給未來區間）")
+    if info["reasons"]:
+        st.caption("理由： " + " / ".join(info["reasons"]))
+
+    # 未來預估區間 + 距離（重點）
+    st.subheader("🗺️ 未來預估買賣點（區間 + 距離%）")
     colA, colB = st.columns(2)
+
     with colA:
-        if buy_zone:
-            st.info(f"✅ 預估買點區間：{buy_zone[0]:.2f} ~ {buy_zone[1]:.2f}")
-            if buy_reason:
-                st.caption("條件： " + " / ".join(buy_reason))
+        bz = info["buy_zone"]
+        if bz:
+            st.success(f"預估買點區間：**{bz[0]:.2f} ~ {bz[1]:.2f}**")
+            if info["dist_to_buy_pct"] is not None:
+                st.caption(f"目前價距離買區中心：{info['dist_to_buy_pct']:.2f}%（負值=低於中心，正值=高於中心）")
+            st.caption("狀態：" + ("✅ 已進入買區" if info["in_buy_zone"] else "尚未進入買區"))
         else:
             st.warning("買點區間：資料不足（需更多K線）")
 
     with colB:
-        if sell_zone:
-            st.info(f"✅ 預估賣點區間：{sell_zone[0]:.2f} ~ {sell_zone[1]:.2f}")
-            if sell_reason:
-                st.caption("條件： " + " / ".join(sell_reason))
+        sz = info["sell_zone"]
+        if sz:
+            st.success(f"預估賣點區間：**{sz[0]:.2f} ~ {sz[1]:.2f}**")
+            if info["dist_to_sell_pct"] is not None:
+                st.caption(f"目前價距離賣區中心：{info['dist_to_sell_pct']:.2f}%（負值=低於中心，正值=高於中心）")
+            st.caption("狀態：" + ("✅ 已進入賣區" if info["in_sell_zone"] else "尚未進入賣區"))
         else:
             st.warning("賣點區間：資料不足（需更多K線）")
 
-    st.subheader("📈 收盤價走勢")
+    # 圖表
+    st.subheader("📈 收盤價走勢（視覺判讀）")
     st.line_chart(df["Close"])
 
     if show_debug:
@@ -673,8 +839,10 @@ else:
 
     result = scan_top10(stock_pool, period=period)
 
-    st.subheader("🔥 AI 強勢股 Top 10")
+    st.subheader("🔥 AI 強勢股 Top 10（含當下買賣判斷 + 未來區間）")
     if result.empty:
         st.warning("目前掃描結果為空（代表 pool 內股票都抓不到或不足K線）。建議切回單股模式看逐路診斷表。")
     else:
         st.dataframe(result, use_container_width=True)
+
+        st.caption("排序邏輯：買點優先 → AI分數高者優先 → 越接近買區者優先。")
