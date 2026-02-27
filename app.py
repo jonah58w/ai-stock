@@ -1,848 +1,784 @@
 from __future__ import annotations
 
-import io
-import time
 import math
 import datetime as dt
-from typing import Optional, List, Dict, Tuple
+from dataclasses import dataclass
+from typing import Dict, Tuple, Optional, List
 
-from dateutil.relativedelta import relativedelta
 import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-
+import ta
+import yfinance as yf
+from sklearn.ensemble import RandomForestClassifier
 
 # =========================
-# App Config
+# Streamlit Config
 # =========================
-st.set_page_config(layout="wide")
-APP_TITLE = "🧠 AI 台股量化專業平台（最終極全備援 + 逐路診斷版 / 不自動下單）"
+st.set_page_config(page_title="V21.5 單檔精準版（可解釋混合AI）", layout="wide")
 
-HEADERS_TWSE = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json,text/plain,*/*",
-    "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
-    "Referer": "https://www.twse.com.tw/",
-    "Connection": "keep-alive",
-}
-HEADERS_TPEX = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json,text/plain,*/*",
-    "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.9",
-    "Referer": "https://www.tpex.org.tw/",
-    "Connection": "keep-alive",
-}
-HEADERS_GENERIC = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "*/*",
-    "Connection": "keep-alive",
-}
+# =========================
+# Global Settings
+# =========================
+DEFAULT_TOTAL_CAPITAL = 9_000_000
+DEFAULT_STOCK_RATIO = 0.40
 
+ROLLING_WINDOW = 120          # rolling training window
+PRED_HORIZON_DAYS = 5         # label horizon
+MIN_RR = 1.80                 # RR filter
+MAX_RISK_CAP = 0.015          # hard cap on risk ratio
+BASE_RISK = 0.012             # base per-trade risk (stock capital)
+DATA_LOOKBACK_MONTHS = 26     # approx 2y+
 
 # =========================
 # Helpers
 # =========================
-def _norm_code(code: str) -> str:
-    return str(code).strip().upper().replace(".TW", "").replace(".TWO", "")
-
-def _roc_year(ad_year: int) -> int:
-    return ad_year - 1911
-
-def _period_to_months(period: str) -> int:
-    p = (period or "6mo").strip().lower()
-    if p.endswith("mo"):
-        return max(1, int(p.replace("mo", "")))
-    if p.endswith("y"):
-        return max(1, int(p.replace("y", ""))) * 12
-    return 6
-
-def _safe_float(x):
-    if x is None:
-        return np.nan
-    s = str(x).strip().replace(",", "")
-    if s in {"", "--", "null", "None"}:
-        return np.nan
+def _to_float(x) -> float:
     try:
-        return float(s)
-    except:
+        if isinstance(x, str):
+            x = x.replace(",", "").strip()
+        return float(x)
+    except Exception:
         return np.nan
 
-def _safe_int(x):
-    v = _safe_float(x)
-    if math.isnan(v):
-        return np.nan
-    return int(v)
-
-def _parse_roc_date(s: str):
-    p = str(s).split("/")
-    if len(p) != 3:
-        return pd.NaT
-    y = int(p[0]) + 1911
-    m = int(p[1])
-    d = int(p[2])
-    return pd.Timestamp(y, m, d)
-
-def _ensure_ohlcv(df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    if df is None or df.empty:
-        return None
-    need = ["Open", "High", "Low", "Close", "Volume"]
-    for c in need:
-        if c not in df.columns:
-            return None
-    df = df.dropna(subset=["Close"])
-    if df.empty:
-        return None
-    return df[need].copy()
-
-def _dedup_sort(df: pd.DataFrame) -> pd.DataFrame:
+def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [c.lower() for c in df.columns]
+    # Ensure columns
+    for col in ["open", "high", "low", "close", "volume"]:
+        if col not in df.columns:
+            raise ValueError(f"Missing column: {col}")
+    df = df.dropna(subset=["open", "high", "low", "close"])
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
     df = df.sort_index()
-    return df[~df.index.duplicated(keep="last")]
+    return df
 
-def _req(url: str, headers: dict, retry: int = 3, sleep: float = 0.7):
-    last_dbg = {"url": url, "status": None, "snippet": None, "exception": None}
-    for i in range(retry):
-        try:
-            r = requests.get(url, headers=headers, timeout=20)
-            last_dbg["status"] = r.status_code
-            last_dbg["snippet"] = (r.text or "")[:200]
-            if r.status_code == 200:
-                return r, last_dbg
-            time.sleep(sleep * (i + 1))
-        except Exception as e:
-            last_dbg["exception"] = str(e)[:200]
-            time.sleep(sleep * (i + 1))
-    return None, last_dbg
+# =========================
+# TWSE / TPEX Data Loader (Daily)
+# =========================
+def _month_starts(end_date: dt.date, months: int) -> List[dt.date]:
+    # produce month starts going back "months"
+    out = []
+    y, m = end_date.year, end_date.month
+    for _ in range(months):
+        out.append(dt.date(y, m, 1))
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    return out
 
-def _pct(a: float, b: float) -> Optional[float]:
-    # (a-b)/b
-    if a is None or b is None:
-        return None
+def _fetch_twse_month(stock_no: str, month_start: dt.date) -> Optional[pd.DataFrame]:
+    # TWSE endpoint expects date YYYYMMDD
+    url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+    params = {
+        "response": "json",
+        "date": month_start.strftime("%Y%m%d"),
+        "stockNo": stock_no
+    }
     try:
-        if b == 0:
+        r = requests.get(url, params=params, timeout=15)
+        if r.status_code != 200:
             return None
-        return (a - b) / b * 100.0
-    except:
+        j = r.json()
+        if j.get("stat") != "OK":
+            return None
+        data = j.get("data", [])
+        if not data:
+            return None
+        # TWSE columns: 日期, 成交股數, 成交金額, 開盤價, 最高價, 最低價, 收盤價, 漲跌價差, 成交筆數
+        rows = []
+        for row in data:
+            # date format like "114/02/03" (ROC year)
+            d = str(row[0]).strip()
+            # ROC to AD
+            try:
+                roc_y, mm, dd = d.split("/")
+                ad_y = int(roc_y) + 1911
+                date = dt.date(ad_y, int(mm), int(dd))
+            except Exception:
+                continue
+            rows.append({
+                "date": date,
+                "open": _to_float(row[3]),
+                "high": _to_float(row[4]),
+                "low": _to_float(row[5]),
+                "close": _to_float(row[6]),
+                "volume": _to_float(row[1]),
+            })
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return None
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date")
+        return df
+    except Exception:
         return None
 
-
-# =========================
-# Network test
-# =========================
-def net_test() -> pd.DataFrame:
-    targets = [
-        ("TWSE", "https://www.twse.com.tw/"),
-        ("TPEX", "https://www.tpex.org.tw/"),
-        ("Yahoo", "https://finance.yahoo.com/"),
-        ("Stooq", "https://stooq.com/"),
-        ("Google204", "https://www.google.com/generate_204"),
-    ]
-    rows = []
-    for name, url in targets:
-        try:
-            r = requests.get(url, headers=HEADERS_GENERIC, timeout=12)
-            rows.append({"Target": name, "URL": url, "Status": r.status_code, "OK": r.status_code in (200, 204)})
-        except Exception as e:
-            rows.append({"Target": name, "URL": url, "Status": "EXCEPTION", "OK": False, "Error": str(e)[:160]})
-    return pd.DataFrame(rows)
-
-
-# =========================
-# Source A: TWSE CSV (上市) ✅已修正：找表頭行再解析（避免 TOO_SHORT）
-# =========================
-def _twse_csv_month(code: str, yyyymm: str):
-    date_str = f"{yyyymm}01"
-    url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=csv&date={date_str}&stockNo={code}"
-    r, dbg = _req(url, HEADERS_TWSE, retry=3)
-    if not r:
-        return None, {"source": "TWSE_CSV", "result": "FAIL", **dbg, "yyyymm": yyyymm}
-
+def _fetch_tpex_month(stock_no: str, month_start: dt.date) -> Optional[pd.DataFrame]:
+    # TPEX endpoint expects d=YYY/MM/DD (ROC year)
+    roc_year = month_start.year - 1911
+    d_str = f"{roc_year}/{month_start.month:02d}/{month_start.day:02d}"
+    url = "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+    params = {
+        "l": "zh-tw",
+        "d": d_str,
+        "stkno": stock_no
+    }
     try:
-        r.encoding = "utf-8"
-    except:
-        pass
-
-    text = r.text or ""
-    if not text.strip():
-        return None, {"source": "TWSE_CSV", "result": "EMPTY_TEXT", **dbg, "yyyymm": yyyymm}
-
-    raw_lines = [ln.strip().strip("\ufeff") for ln in text.splitlines() if ln.strip()]
-    if len(raw_lines) < 3:
-        return None, {"source": "TWSE_CSV", "result": "TOO_SHORT_TEXT", **dbg, "yyyymm": yyyymm}
-
-    header_idx = None
-    for i, ln in enumerate(raw_lines):
-        if ln.startswith("日期,") and (("成交股數" in ln) or ("開盤價" in ln) or ("收盤價" in ln)):
-            header_idx = i
-            break
-    if header_idx is None:
-        for i, ln in enumerate(raw_lines):
-            if ("日期" in ln) and ("成交股數" in ln) and ("," in ln):
-                header_idx = i
-                break
-
-    if header_idx is None:
-        return None, {
-            "source": "TWSE_CSV",
-            "result": "NO_HEADER_FOUND",
-            "preview": raw_lines[:6],
-            **dbg,
-            "yyyymm": yyyymm,
-        }
-
-    csv_text = "\n".join(raw_lines[header_idx:])
-
-    try:
-        df = pd.read_csv(io.StringIO(csv_text), engine="python")
-    except Exception as e:
-        return None, {"source": "TWSE_CSV", "result": "PARSE_ERR", "exception": str(e)[:200], **dbg, "yyyymm": yyyymm}
-
-    df.columns = [str(c).strip().replace('"', "") for c in df.columns]
-    colmap = {"日期": "Date", "開盤價": "Open", "最高價": "High", "最低價": "Low", "收盤價": "Close", "成交股數": "Volume"}
-    df = df.rename(columns=colmap)
-
-    if "Date" not in df.columns:
-        return None, {"source": "TWSE_CSV", "result": "NO_DATE_COL", "cols": list(df.columns)[:12], **dbg, "yyyymm": yyyymm}
-
-    df["Date"] = df["Date"].apply(_parse_roc_date)
-    df = df.set_index("Date")
-
-    for c in ["Open", "High", "Low", "Close"]:
-        if c in df.columns:
-            df[c] = df[c].astype(str).str.replace(",", "").apply(_safe_float)
-    if "Volume" in df.columns:
-        df["Volume"] = df["Volume"].astype(str).str.replace(",", "").apply(_safe_int)
-
-    df = _ensure_ohlcv(df)
-    if df is None:
-        return None, {"source": "TWSE_CSV", "result": "NO_OHLCV", "cols": list(df.columns)[:12], **dbg, "yyyymm": yyyymm}
-
-    return df, {"source": "TWSE_CSV", "result": "OK", **dbg, "yyyymm": yyyymm}
-
-
-# =========================
-# Source B: TWSE JSON (上市)
-# =========================
-def _twse_json_month(code: str, yyyymm: str):
-    date_str = f"{yyyymm}01"
-    url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date_str}&stockNo={code}"
-    r, dbg = _req(url, HEADERS_TWSE, retry=3)
-    if not r:
-        return None, {"source": "TWSE_JSON", "result": "FAIL", **dbg, "yyyymm": yyyymm}
-
-    try:
+        r = requests.get(url, params=params, timeout=15)
+        if r.status_code != 200:
+            return None
         j = r.json()
-    except Exception as e:
-        return None, {"source": "TWSE_JSON", "result": "JSON_PARSE_ERR", "exception": str(e)[:200], **dbg, "yyyymm": yyyymm}
+        data = j.get("aaData", [])
+        if not data:
+            return None
+        # TPEX columns vary; typical: 日期, 成交股數, 成交金額, 開盤, 最高, 最低, 收盤, 漲跌, 成交筆數
+        rows = []
+        for row in data:
+            d = str(row[0]).strip()
+            try:
+                roc_y, mm, dd = d.split("/")
+                ad_y = int(roc_y) + 1911
+                date = dt.date(ad_y, int(mm), int(dd))
+            except Exception:
+                continue
+            rows.append({
+                "date": date,
+                "open": _to_float(row[3]),
+                "high": _to_float(row[4]),
+                "low": _to_float(row[5]),
+                "close": _to_float(row[6]),
+                "volume": _to_float(row[1]),
+            })
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return None
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date")
+        return df
+    except Exception:
+        return None
 
-    if j.get("stat") != "OK":
-        return None, {"source": "TWSE_JSON", "result": f"NOT_OK({j.get('stat')})", **dbg, "yyyymm": yyyymm}
-
-    fields = j.get("fields", [])
-    data = j.get("data", [])
-    if not data:
-        return None, {"source": "TWSE_JSON", "result": "EMPTY", **dbg, "yyyymm": yyyymm}
-
-    df = pd.DataFrame(data, columns=fields)
-    colmap = {"日期": "Date", "開盤價": "Open", "最高價": "High", "最低價": "Low", "收盤價": "Close", "成交股數": "Volume"}
-    df = df.rename(columns=colmap)
-
-    if "Date" not in df.columns:
-        return None, {"source": "TWSE_JSON", "result": "NO_DATE_COL", "cols": list(df.columns)[:12], **dbg, "yyyymm": yyyymm}
-
-    df["Date"] = df["Date"].apply(_parse_roc_date)
-    df = df.set_index("Date")
-    for c in ["Open", "High", "Low", "Close"]:
-        df[c] = df[c].apply(_safe_float)
-    df["Volume"] = df["Volume"].apply(_safe_int)
-
-    df = _ensure_ohlcv(df)
-    if df is None:
-        return None, {"source": "TWSE_JSON", "result": "NO_OHLCV", "cols": list(df.columns)[:12], **dbg, "yyyymm": yyyymm}
-
-    return df, {"source": "TWSE_JSON", "result": "OK", **dbg, "yyyymm": yyyymm}
-
-
-# =========================
-# Source C: TPEX JSON (上櫃)
-# =========================
-def _tpex_json_month(code: str, yyyymm: str):
-    y = int(yyyymm[:4])
-    m = int(yyyymm[4:6])
-    d_param = f"{_roc_year(y)}/{m:02d}"
-    url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?d={d_param}&stkno={code}"
-    r, dbg = _req(url, HEADERS_TPEX, retry=3)
-    if not r:
-        return None, {"source": "TPEX_JSON", "result": "FAIL", **dbg, "yyyymm": yyyymm}
-
-    try:
-        j = r.json()
-    except Exception as e:
-        return None, {"source": "TPEX_JSON", "result": "JSON_PARSE_ERR", "exception": str(e)[:200], **dbg, "yyyymm": yyyymm}
-
-    data = j.get("aaData") or j.get("data") or []
-    if not data:
-        return None, {"source": "TPEX_JSON", "result": "EMPTY", **dbg, "yyyymm": yyyymm}
-
-    rows = []
-    for row in data:
-        if not row or len(row) < 7:
+def _fetch_official_daily(stock_no: str, months_back: int = DATA_LOOKBACK_MONTHS) -> Optional[pd.DataFrame]:
+    """Try TWSE first; if no data, try TPEX. Merge months into one df."""
+    end = dt.date.today()
+    months = _month_starts(end, months_back)
+    frames = []
+    twse_hits = 0
+    tpex_hits = 0
+    for ms in months:
+        df_m = _fetch_twse_month(stock_no, ms)
+        if df_m is not None and not df_m.empty:
+            frames.append(df_m)
+            twse_hits += 1
             continue
-        date_s, vol_s = row[0], row[1]
-        open_s, high_s, low_s, close_s = row[3], row[4], row[5], row[6]
-        date = _parse_roc_date(date_s)
-        if pd.isna(date):
-            continue
-        rows.append({
-            "Date": date,
-            "Open": _safe_float(open_s),
-            "High": _safe_float(high_s),
-            "Low": _safe_float(low_s),
-            "Close": _safe_float(close_s),
-            "Volume": _safe_int(vol_s),
-        })
+        df_m = _fetch_tpex_month(stock_no, ms)
+        if df_m is not None and not df_m.empty:
+            frames.append(df_m)
+            tpex_hits += 1
+    if not frames:
+        return None
+    df = pd.concat(frames).sort_index()
+    df = df[~df.index.duplicated(keep="last")]
+    df = df.dropna(subset=["open", "high", "low", "close"])
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
+    return df
 
-    if not rows:
-        return None, {"source": "TPEX_JSON", "result": "ROWS_EMPTY", **dbg, "yyyymm": yyyymm}
+@st.cache_data(ttl=300)
+def load_data(symbol: str) -> pd.DataFrame:
+    """
+    symbol:
+      - "2330" / "6274" => try TWSE/TPEX official
+      - "2330.TW" / "6274.TWO" => yfinance (fallback)
+    """
+    sym = symbol.strip().upper()
 
-    df = pd.DataFrame(rows).set_index("Date")
-    df = _ensure_ohlcv(df)
-    if df is None:
-        return None, {"source": "TPEX_JSON", "result": "NO_OHLCV", **dbg, "yyyymm": yyyymm}
+    # If pure digits => official
+    if sym.isdigit():
+        df = _fetch_official_daily(sym)
+        if df is not None and len(df) > 120:
+            return _normalize_ohlcv(df)
 
-    return df, {"source": "TPEX_JSON", "result": "OK", **dbg, "yyyymm": yyyymm}
+        # fallback to yfinance with .TW then .TWO
+        for suf in [".TW", ".TWO"]:
+            try:
+                dfy = yf.download(sym + suf, period="2y", interval="1d", auto_adjust=False, progress=False)
+                if dfy is not None and len(dfy) > 120:
+                    dfy = dfy.rename(columns=str.lower)
+                    dfy = dfy.rename(columns={"adj close": "adj_close"})
+                    return _normalize_ohlcv(dfy)
+            except Exception:
+                pass
+        raise ValueError(f"抓不到資料：{symbol}（官方 + Yahoo fallback 都失敗）")
 
-
-# =========================
-# Source D: yfinance (備援)
-# =========================
-def _yahoo_yfinance(code: str, period: str):
+    # Otherwise treat as yfinance ticker
     try:
-        import yfinance as yf
+        dfy = yf.download(sym, period="2y", interval="1d", auto_adjust=False, progress=False)
+        if dfy is None or len(dfy) < 120:
+            raise ValueError("yfinance data too short")
+        dfy = dfy.rename(columns=str.lower)
+        dfy = dfy.rename(columns={"adj close": "adj_close"})
+        return _normalize_ohlcv(dfy)
     except Exception as e:
-        return None, {"source": "YFINANCE", "result": "NOT_INSTALLED", "exception": str(e)[:200]}
-
-    tickers = [f"{code}.TW", f"{code}.TWO"]
-    last_err = None
-    for t in tickers:
-        try:
-            df = yf.download(t, period=period, progress=False, threads=False, auto_adjust=False)
-            if df is None or df.empty:
-                last_err = f"{t} empty"
-                continue
-            df = df.dropna(subset=["Close"])
-            if df.empty:
-                last_err = f"{t} empty after dropna"
-                continue
-            df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
-            df.index = pd.to_datetime(df.index)
-            df = _ensure_ohlcv(df)
-            if df is not None:
-                return df, {"source": "YFINANCE", "result": "OK", "ticker": t}
-            last_err = f"{t} no ohlcv"
-        except Exception as e:
-            last_err = str(e)[:200]
-            time.sleep(0.6)
-    return None, {"source": "YFINANCE", "result": "FAIL", "exception": last_err}
-
+        raise ValueError(f"抓不到資料：{symbol}（yfinance 失敗）: {e}")
 
 # =========================
-# Source E: Stooq (備援)
+# Feature Engineering (Explainable)
 # =========================
-def _stooq(code: str):
-    try:
-        from pandas_datareader import data as pdr
-    except Exception as e:
-        return None, {"source": "STOOQ", "result": "NOT_INSTALLED", "exception": str(e)[:200]}
-
-    tickers = [f"{code}.TW", f"{code}.TWO"]
-    last_err = None
-    for t in tickers:
-        try:
-            df = pdr.DataReader(t, "stooq")
-            if df is None or df.empty:
-                last_err = f"{t} empty"
-                continue
-            df = df.sort_index()
-            df.index = pd.to_datetime(df.index)
-            df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
-            df = _ensure_ohlcv(df)
-            if df is not None:
-                return df, {"source": "STOOQ", "result": "OK", "ticker": t}
-            last_err = f"{t} no ohlcv"
-        except Exception as e:
-            last_err = str(e)[:200]
-            time.sleep(0.6)
-
-    return None, {"source": "STOOQ", "result": "FAIL", "exception": last_err}
-
-
-# =========================
-# Ultimate master downloader (with trace)
-# =========================
-@st.cache_data(ttl=600)
-def download_data_with_trace(code: str, period: str = "6mo", fixed_months: int = 14):
-    code = _norm_code(code)
-    months_keep = _period_to_months(period)
-
-    today = dt.date.today()
-    end = today.replace(day=1)
-    month_list = [(end - relativedelta(months=i)).strftime("%Y%m") for i in range(fixed_months)]
-    month_list = list(reversed(month_list))
-
-    trace: List[Dict] = []
-
-    # 1) TWSE CSV
-    parts = []
-    for yyyymm in month_list:
-        dfm, info = _twse_csv_month(code, yyyymm)
-        trace.append(info)
-        if dfm is not None and not dfm.empty:
-            parts.append(dfm)
-    if parts:
-        df = _dedup_sort(pd.concat(parts))
-        cutoff = df.index.max() - relativedelta(months=months_keep)
-        df = df[df.index >= cutoff]
-        df = _ensure_ohlcv(df)
-        if df is not None:
-            return df, "TWSE_CSV", trace
-
-    # 2) TWSE JSON
-    parts = []
-    for yyyymm in month_list:
-        dfm, info = _twse_json_month(code, yyyymm)
-        trace.append(info)
-        if dfm is not None and not dfm.empty:
-            parts.append(dfm)
-    if parts:
-        df = _dedup_sort(pd.concat(parts))
-        cutoff = df.index.max() - relativedelta(months=months_keep)
-        df = df[df.index >= cutoff]
-        df = _ensure_ohlcv(df)
-        if df is not None:
-            return df, "TWSE_JSON", trace
-
-    # 3) TPEX JSON
-    parts = []
-    for yyyymm in month_list:
-        dfm, info = _tpex_json_month(code, yyyymm)
-        trace.append(info)
-        if dfm is not None and not dfm.empty:
-            parts.append(dfm)
-    if parts:
-        df = _dedup_sort(pd.concat(parts))
-        cutoff = df.index.max() - relativedelta(months=months_keep)
-        df = df[df.index >= cutoff]
-        df = _ensure_ohlcv(df)
-        if df is not None:
-            return df, "TPEX_JSON", trace
-
-    # 4) yfinance
-    df, info = _yahoo_yfinance(code, period=period)
-    trace.append(info)
-    if df is not None:
-        return df, "YFINANCE", trace
-
-    # 5) stooq
-    df, info = _stooq(code)
-    trace.append(info)
-    if df is not None:
-        cutoff = df.index.max() - relativedelta(months=months_keep)
-        df = df[df.index >= cutoff]
-        df = _ensure_ohlcv(df)
-        if df is not None:
-            return df, "STOOQ", trace
-
-    return None, None, trace
-
-
-# =========================
-# Indicators
-# =========================
-def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
+def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    df["SMA20"] = df["Close"].rolling(20).mean()
-    df["SMA60"] = df["Close"].rolling(60).mean()
+    close = df["close"]
+    high = df["high"]
+    low = df["low"]
+    vol = df["volume"]
 
-    # RSI(14)
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = (-delta).clip(lower=0)
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    df["RSI"] = 100 - (100 / (1 + rs))
+    # Trend + momentum
+    df["ema20"] = close.ewm(span=20).mean()
+    df["ema60"] = close.ewm(span=60).mean()
 
-    # KD(9)
-    low9 = df["Low"].rolling(9).min()
-    high9 = df["High"].rolling(9).max()
-    rsv = (df["Close"] - low9) / (high9 - low9) * 100
-    df["K"] = rsv.ewm(alpha=1/3, adjust=False).mean()
-    df["D"] = df["K"].ewm(alpha=1/3, adjust=False).mean()
+    df["rsi"] = ta.momentum.RSIIndicator(close).rsi()
+    df["adx"] = ta.trend.ADXIndicator(high, low, close).adx()
 
-    # MACD (12,26,9)
-    ema12 = df["Close"].ewm(span=12, adjust=False).mean()
-    ema26 = df["Close"].ewm(span=26, adjust=False).mean()
-    df["DIF"] = ema12 - ema26
-    df["DEA"] = df["DIF"].ewm(span=9, adjust=False).mean()
-    df["MACD"] = (df["DIF"] - df["DEA"]) * 2
+    # Volume health
+    df["vol_ma20"] = vol.rolling(20).mean()
+    df["vol_ratio"] = (vol / df["vol_ma20"]).replace([np.inf, -np.inf], np.nan)
 
-    # Bollinger(20,2)
-    ma20 = df["Close"].rolling(20).mean()
-    std20 = df["Close"].rolling(20).std()
-    df["BB_MID"] = ma20
-    df["BB_UP"] = ma20 + 2 * std20
-    df["BB_LOW"] = ma20 - 2 * std20
+    # Volatility (ATR)
+    df["atr"] = ta.volatility.AverageTrueRange(high, low, close).average_true_range()
+    df["atr_ratio"] = df["atr"] / df["atr"].rolling(60).mean()
 
-    # Volume MA
-    df["VOL_MA20"] = df["Volume"].rolling(20).mean()
+    # Distance / momentum
+    df["distance_ema20"] = (close - df["ema20"]) / df["ema20"]
+    df["mom_5"] = close.pct_change(5)
+    df["mom_10"] = close.pct_change(10)
 
-    # Support/Resistance (60)
-    df["SUPPORT"] = df["Low"].rolling(60).min()
-    df["RESIST"] = df["High"].rolling(60).max()
+    # Bollinger width for compression
+    bb = ta.volatility.BollingerBands(close)
+    df["bb_width"] = bb.bollinger_wband()
 
-    # ATR(14)
-    high_low = df["High"] - df["Low"]
-    high_close = (df["High"] - df["Close"].shift()).abs()
-    low_close = (df["Low"] - df["Close"].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df["ATR14"] = tr.rolling(14).mean()
+    # Slope & acceleration (EMA20)
+    df["ema_slope"] = df["ema20"].diff()
+    df["ema_accel"] = df["ema_slope"].diff()
+
+    # Precomputed rolling highs
+    df["roll60_high"] = high.rolling(60).max()
+    df["prev60_high"] = df["roll60_high"].shift(1)
 
     return df
 
+# =========================
+# Regime (Explainable)
+# =========================
+def market_regime(df: pd.DataFrame) -> str:
+    close = df["close"]
+    ema20 = df["ema20"]
+    ema60 = df["ema60"]
+    adx = df["adx"]
+
+    if close.iloc[-1] > ema20.iloc[-1] > ema60.iloc[-1] and adx.iloc[-1] > 20:
+        return "EXPANSION"
+    if adx.iloc[-1] < 18:
+        return "COMPRESSION"
+    return "CONTRACTION"
 
 # =========================
-# Scoring + zones + NOW action
+# Filters / Signals
 # =========================
-def ai_score(df: pd.DataFrame) -> int:
-    latest = df.iloc[-1]
-    score = 0
-    if pd.notna(latest["SMA20"]) and pd.notna(latest["SMA60"]) and latest["SMA20"] > latest["SMA60"]:
-        score += 25
-    if pd.notna(latest["SMA20"]) and latest["Close"] > latest["SMA20"]:
-        score += 10
-    if pd.notna(latest["RSI"]) and latest["RSI"] > 55:
-        score += 15
-    if pd.notna(latest["K"]) and pd.notna(latest["D"]) and latest["K"] > latest["D"]:
-        score += 10
-    if pd.notna(latest["MACD"]) and latest["MACD"] > 0:
-        score += 10
-    if pd.notna(latest["VOL_MA20"]) and latest["Volume"] > latest["VOL_MA20"]:
-        score += 15
-    if pd.notna(latest["RESIST"]) and latest["Close"] >= latest["RESIST"]:
-        score += 15
-    return int(min(score, 100))
+def volume_filter(df: pd.DataFrame) -> Tuple[bool, Dict[str, float]]:
+    """Avoid no-volume breakouts and distribution."""
+    vol_ratio = float(df["vol_ratio"].iloc[-1]) if pd.notna(df["vol_ratio"].iloc[-1]) else 0.0
+    healthy = (1.2 < vol_ratio < 2.5)
 
-def future_buy_sell_zones(df: pd.DataFrame) -> Tuple[Optional[Tuple[float,float]], List[str], Optional[Tuple[float,float]], List[str]]:
-    latest = df.iloc[-1]
-    close = float(latest["Close"])
+    # Distribution: very high vol + long upper shadow
+    o = df["open"].iloc[-1]
+    c = df["close"].iloc[-1]
+    h = df["high"].iloc[-1]
+    upper_shadow = h - max(o, c)
+    body = abs(c - o) + 1e-9
+    distribution = (vol_ratio > 2.5 and upper_shadow > body * 1.5)
 
-    support = float(latest["SUPPORT"]) if pd.notna(latest["SUPPORT"]) else None
-    resist = float(latest["RESIST"]) if pd.notna(latest["RESIST"]) else None
-    bb_low = float(latest["BB_LOW"]) if pd.notna(latest["BB_LOW"]) else None
-    bb_up = float(latest["BB_UP"]) if pd.notna(latest["BB_UP"]) else None
-    rsi = float(latest["RSI"]) if pd.notna(latest["RSI"]) else None
-    k = float(latest["K"]) if pd.notna(latest["K"]) else None
-    d = float(latest["D"]) if pd.notna(latest["D"]) else None
-
-    buy_center = None
-    if support and bb_low:
-        buy_center = min(support, bb_low)
-    elif support:
-        buy_center = support
-    elif bb_low:
-        buy_center = bb_low
-
-    buy_zone = None
-    buy_reason = []
-    if buy_center:
-        buy_zone = (buy_center * 0.99, buy_center * 1.01)
-        if rsi is not None and rsi <= 40:
-            buy_reason.append("RSI偏低")
-        if k is not None and d is not None and k <= 25 and d <= 30:
-            buy_reason.append("KD偏低")
-        if bb_low and close <= bb_low * 1.03:
-            buy_reason.append("接近布林下軌")
-        if support and close <= support * 1.05:
-            buy_reason.append("接近支撐")
-
-    sell_center = None
-    if resist and bb_up:
-        sell_center = max(resist, bb_up)
-    elif resist:
-        sell_center = resist
-    elif bb_up:
-        sell_center = bb_up
-
-    sell_zone = None
-    sell_reason = []
-    if sell_center:
-        sell_zone = (sell_center * 0.99, sell_center * 1.01)
-        if rsi is not None and rsi >= 65:
-            sell_reason.append("RSI偏高")
-        if k is not None and d is not None and k >= 75 and d >= 70:
-            sell_reason.append("KD偏高")
-        if bb_up and close >= bb_up * 0.97:
-            sell_reason.append("接近布林上軌")
-        if resist and close >= resist * 0.95:
-            sell_reason.append("接近壓力")
-
-    return buy_zone, buy_reason, sell_zone, sell_reason
-
-def now_action(df: pd.DataFrame):
-    """
-    回傳：
-      action: "買點" / "賣點" / "觀望"
-      confidence: 0~100
-      reasons: list[str]
-      dist_to_buy_pct, dist_to_sell_pct: 目前價 到 buy_zone/sell_zone 中心的距離(%)
-      in_buy_zone, in_sell_zone: bool
-    """
-    latest = df.iloc[-1]
-    close = float(latest["Close"])
-    score = ai_score(df)
-
-    buy_zone, buy_reason, sell_zone, sell_reason = future_buy_sell_zones(df)
-
-    in_buy = False
-    in_sell = False
-    dist_buy = None
-    dist_sell = None
-
-    if buy_zone:
-        lo, hi = buy_zone
-        in_buy = (close >= lo) and (close <= hi)
-        center = (lo + hi) / 2.0
-        dist_buy = _pct(close, center)
-
-    if sell_zone:
-        lo, hi = sell_zone
-        in_sell = (close >= lo) and (close <= hi)
-        center = (lo + hi) / 2.0
-        dist_sell = _pct(close, center)
-
-    # 共振條件（用來做「當下判斷」）
-    rsi = float(latest["RSI"]) if pd.notna(latest["RSI"]) else None
-    k = float(latest["K"]) if pd.notna(latest["K"]) else None
-    d = float(latest["D"]) if pd.notna(latest["D"]) else None
-    macd = float(latest["MACD"]) if pd.notna(latest["MACD"]) else None
-    vol_ma = float(latest["VOL_MA20"]) if pd.notna(latest["VOL_MA20"]) else None
-    vol = float(latest["Volume"]) if pd.notna(latest["Volume"]) else None
-
-    buy_votes = 0
-    sell_votes = 0
-    reasons = []
-
-    # 買方條件
-    if in_buy:
-        buy_votes += 2
-        reasons.append("價格已進入買點區間")
-    if rsi is not None and rsi <= 40:
-        buy_votes += 1
-        reasons.append("RSI低檔")
-    if k is not None and d is not None and k <= 25 and d <= 30:
-        buy_votes += 1
-        reasons.append("KD低檔")
-    if macd is not None and macd > 0:
-        buy_votes += 1
-        reasons.append("MACD轉強(>0)")
-    if vol is not None and vol_ma is not None and vol > vol_ma:
-        buy_votes += 1
-        reasons.append("量能放大")
-
-    # 賣方條件
-    if in_sell:
-        sell_votes += 2
-        reasons.append("價格已進入賣點區間")
-    if rsi is not None and rsi >= 65:
-        sell_votes += 1
-        reasons.append("RSI高檔")
-    if k is not None and d is not None and k >= 75 and d >= 70:
-        sell_votes += 1
-        reasons.append("KD高檔")
-    if macd is not None and macd < 0:
-        sell_votes += 1
-        reasons.append("MACD轉弱(<0)")
-
-    # 決策邏輯（避免亂跳）
-    if (sell_votes >= 3) and (sell_votes > buy_votes):
-        action = "賣點"
-        confidence = min(95, 55 + sell_votes * 10 + (max(0, (100 - score)) // 10))
-    elif (buy_votes >= 3) and (buy_votes > sell_votes):
-        action = "買點"
-        confidence = min(95, 55 + buy_votes * 10 + (score // 10))
-    else:
-        action = "觀望"
-        confidence = 40 + min(30, abs(buy_votes - sell_votes) * 5)
-
-    # 理由精簡：買/賣 只留對應
-    if action == "買點":
-        reasons = [r for r in reasons if ("買" in r) or ("低檔" in r) or ("轉強" in r) or ("量能" in r)]
-        if buy_reason:
-            reasons += [f"（區間條件）{' / '.join(buy_reason)}"]
-    elif action == "賣點":
-        reasons = [r for r in reasons if ("賣" in r) or ("高檔" in r) or ("轉弱" in r)]
-        if sell_reason:
-            reasons += [f"（區間條件）{' / '.join(sell_reason)}"]
-    else:
-        # 觀望：只留中性
-        reasons = ["條件尚未形成明確共振（等待價格進入區間/或指標翻轉）"]
-
-    return {
-        "action": action,
-        "confidence": int(confidence),
-        "reasons": reasons[:4],  # 不要太長
-        "score": score,
-        "close": close,
-        "buy_zone": buy_zone,
-        "sell_zone": sell_zone,
-        "dist_to_buy_pct": dist_buy,
-        "dist_to_sell_pct": dist_sell,
-        "in_buy_zone": in_buy,
-        "in_sell_zone": in_sell,
+    return (healthy and not distribution), {
+        "vol_ratio": vol_ratio,
+        "distribution": float(distribution),
     }
 
+def compression_energy_signal(df: pd.DataFrame) -> Tuple[bool, Dict[str, float]]:
+    """BB width + ATR compression + duration + near-high."""
+    bb_width = df["bb_width"].iloc[-1]
+    if pd.isna(bb_width):
+        return False, {"bb_width": np.nan, "atr_ratio": np.nan, "compression_days": 0, "near_high": 0}
+
+    bb_q25 = df["bb_width"].quantile(0.25)
+    compression = bb_width < bb_q25
+
+    atr_ratio = df["atr_ratio"].iloc[-1]
+    low_vol = (pd.notna(atr_ratio) and atr_ratio < 0.8)
+
+    # Compression duration: in last 15 days, how many days width < q25
+    compression_days = int((df["bb_width"] < bb_q25).rolling(15).sum().iloc[-1])
+    energy_build = compression_days >= 8
+
+    # Near rolling high
+    roll_high = df["roll60_high"].iloc[-1]
+    near_high = (df["close"].iloc[-1] > roll_high * 0.95) if pd.notna(roll_high) else False
+
+    ok = bool(compression and low_vol and energy_build and near_high)
+    return ok, {
+        "bb_width": float(bb_width),
+        "atr_ratio": float(atr_ratio) if pd.notna(atr_ratio) else np.nan,
+        "compression_days": float(compression_days),
+        "near_high": float(near_high),
+    }
+
+def failed_breakout_signal(df: pd.DataFrame) -> Tuple[bool, Dict[str, float]]:
+    """Breakout yesterday, failed today with volume + bearish candle + RSI rollover."""
+    if len(df) < 70:
+        return False, {"failed_breakout": 0}
+
+    breakout_yday = df["close"].iloc[-2] > df["prev60_high"].iloc[-2]
+    failed_return = df["close"].iloc[-1] < df["prev60_high"].iloc[-1]
+
+    vol_ratio = float(df["vol_ratio"].iloc[-1]) if pd.notna(df["vol_ratio"].iloc[-1]) else 0.0
+    bearish = df["close"].iloc[-1] < df["open"].iloc[-1]
+    large_bear = bearish and (vol_ratio > 1.3)
+
+    rsi_rollover = df["rsi"].iloc[-1] < df["rsi"].iloc[-2] if pd.notna(df["rsi"].iloc[-2]) else False
+
+    ok = bool(breakout_yday and failed_return and large_bear and rsi_rollover)
+    return ok, {
+        "breakout_yday": float(breakout_yday),
+        "failed_return": float(failed_return),
+        "vol_ratio": float(vol_ratio),
+        "bearish": float(bearish),
+        "rsi_rollover": float(rsi_rollover),
+        "failed_breakout": float(ok),
+    }
+
+def momentum_acceleration_signal(df: pd.DataFrame) -> Tuple[bool, Dict[str, float]]:
+    """Slope up + acceleration up + short momentum > medium momentum."""
+    slope_up = df["ema_slope"].iloc[-1] > 0
+    accel_up = df["ema_accel"].iloc[-1] > 0
+    mom_accel = df["mom_5"].iloc[-1] > df["mom_10"].iloc[-1]
+
+    ok = bool(slope_up and accel_up and mom_accel)
+    return ok, {
+        "slope_up": float(slope_up),
+        "accel_up": float(accel_up),
+        "mom_5": float(df["mom_5"].iloc[-1]) if pd.notna(df["mom_5"].iloc[-1]) else np.nan,
+        "mom_10": float(df["mom_10"].iloc[-1]) if pd.notna(df["mom_10"].iloc[-1]) else np.nan,
+        "mom_accel": float(mom_accel),
+    }
 
 # =========================
-# Top10
+# AI Model (Rolling 120) - Explainable Features
 # =========================
-def scan_top10(stock_pool: List[str], period: str) -> pd.DataFrame:
-    rows = []
-    for code in stock_pool:
-        df, src, _trace = download_data_with_trace(code, period=period)
-        if df is None or len(df) < 80:
-            continue
-        df = calc_indicators(df)
-        info = now_action(df)
+def train_ai_win_prob(df_feat: pd.DataFrame) -> Tuple[float, Dict[str, float]]:
+    """
+    Predict probability that close(t+PRED_HORIZON_DAYS) > close(t).
+    Rolling window training only.
+    """
+    df = df_feat.copy()
+    df["future_close"] = df["close"].shift(-PRED_HORIZON_DAYS)
+    df["target"] = (df["future_close"] > df["close"]).astype(int)
 
-        bz = info["buy_zone"]
-        sz = info["sell_zone"]
-        bz_s = "-" if not bz else f"{bz[0]:.2f}~{bz[1]:.2f}"
-        sz_s = "-" if not sz else f"{sz[0]:.2f}~{sz[1]:.2f}"
+    # Features (explainable)
+    feature_cols = [
+        "distance_ema20",
+        "adx",
+        "rsi",
+        "vol_ratio",
+        "atr_ratio",
+        "mom_10",
+        "bb_width",
+        "ema_slope",
+        "ema_accel",
+    ]
 
-        # Top10更好用：顯示距離買/賣區(%)（越小越接近）
-        d_buy = info["dist_to_buy_pct"]
-        d_sell = info["dist_to_sell_pct"]
+    df = df.dropna(subset=feature_cols + ["target"])
+    if len(df) < (ROLLING_WINDOW + 30):
+        # Not enough for stable training
+        return 0.5, {"model_status": 0.0}
 
-        rows.append({
-            "股票": _norm_code(code),
-            "Close": round(info["close"], 2),
-            "當下建議": info["action"],
-            "信心": f'{info["confidence"]}%',
-            "BuyZone": bz_s,
-            "距離買區%": None if d_buy is None else round(d_buy, 2),
-            "SellZone": sz_s,
-            "距離賣區%": None if d_sell is None else round(d_sell, 2),
-            "AI分數": info["score"],
-            "來源": src,
-        })
+    train = df.iloc[-(ROLLING_WINDOW + 1):-1]
+    latest = df.iloc[-1:]
 
-    out = pd.DataFrame(rows)
-    if out.empty:
-        return out
+    X = train[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
+    y = train["target"].astype(int)
 
-    # 排序：先把「買點」排前面，再比 AI分數，再比距離買區絕對值（越小越接近）
-    def action_rank(x):
-        return {"買點": 0, "觀望": 1, "賣點": 2}.get(str(x), 9)
+    model = RandomForestClassifier(
+        n_estimators=260,
+        max_depth=5,
+        min_samples_leaf=6,
+        random_state=42,
+        class_weight="balanced_subsample",
+    )
+    model.fit(X, y)
 
-    out["__rank"] = out["當下建議"].apply(action_rank)
-    out["__abs_buy"] = out["距離買區%"].abs().fillna(9999)
+    X_latest = latest[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
+    prob = float(model.predict_proba(X_latest)[0][1])
 
-    out = out.sort_values(["__rank", "AI分數", "__abs_buy"], ascending=[True, False, True])
-    out = out.drop(columns=["__rank", "__abs_buy"])
-    return out.head(10)
+    # Quick explain: top importances (normalized)
+    importances = model.feature_importances_
+    top_idx = np.argsort(importances)[::-1][:5]
+    explain = {f"imp_{feature_cols[i]}": float(importances[i]) for i in top_idx}
+    explain["model_status"] = 1.0
+    explain["raw_prob"] = prob
 
+    return prob, explain
+
+# =========================
+# Trade Plan
+# =========================
+@dataclass
+class TradePlan:
+    verdict: str
+    reason: str
+    regime: str
+
+    price: float
+    entry_zone: Tuple[float, float]
+    stop: float
+    target1: float
+    target2: float
+    rr1: float
+
+    risk_ratio: float
+    shares: int
+    position_value: float
+    risk_amount: float
+
+    ai_prob: float
+
+def calc_position_size(
+    total_capital: float,
+    stock_ratio: float,
+    max_positions: int,
+    price: float,
+    stop: float,
+    risk_ratio: float
+) -> Tuple[int, float, float]:
+    stock_capital = total_capital * stock_ratio
+    max_risk_money = stock_capital * risk_ratio
+
+    risk_per_share = max(price - stop, 0.0)
+    if risk_per_share <= 0:
+        return 0, 0.0, 0.0
+
+    shares = int(max_risk_money / risk_per_share)
+
+    # concentration cap: max 1/max_positions of stock capital
+    cap_value = stock_capital / max_positions
+    if shares * price > cap_value:
+        shares = int(cap_value / price)
+
+    position_value = shares * price
+    return shares, position_value, max_risk_money
+
+def build_trade_plan(
+    df_feat: pd.DataFrame,
+    total_capital: float,
+    stock_ratio: float,
+    max_positions: int = 3
+) -> TradePlan:
+    price = float(df_feat["close"].iloc[-1])
+
+    regime = market_regime(df_feat)
+
+    # Baseline filters
+    trend_ok = df_feat["ema20"].iloc[-1] > df_feat["ema60"].iloc[-1]
+    rsi_now = float(df_feat["rsi"].iloc[-1]) if pd.notna(df_feat["rsi"].iloc[-1]) else 50.0
+    momentum_ok = (45 < rsi_now < 70)
+
+    # Volume / Compression / Failed breakout / Acceleration
+    vol_ok, vol_dbg = volume_filter(df_feat)
+    comp_ok, comp_dbg = compression_energy_signal(df_feat)
+    fail_ok, fail_dbg = failed_breakout_signal(df_feat)
+    accel_ok, accel_dbg = momentum_acceleration_signal(df_feat)
+
+    # AI
+    ai_prob, ai_dbg = train_ai_win_prob(df_feat)
+
+    # ATR stop (dynamic)
+    atr_now = float(df_feat["atr"].iloc[-1]) if pd.notna(df_feat["atr"].iloc[-1]) else 0.0
+    stop = price - 2.0 * atr_now
+    # also ensure not above EMA60 too tightly (avoid negative risk)
+    ema60 = float(df_feat["ema60"].iloc[-1])
+    stop = min(stop, ema60)  # conservative: whichever lower
+
+    # Targets
+    roll_high = float(df_feat["roll60_high"].iloc[-1]) if pd.notna(df_feat["roll60_high"].iloc[-1]) else price
+    target1 = roll_high
+    target2 = roll_high + 2.0 * atr_now
+
+    # Entry zone around EMA20 (pullback-friendly)
+    ema20 = float(df_feat["ema20"].iloc[-1])
+    entry_low = ema20 * 0.99
+    entry_high = ema20 * 1.01
+
+    # RR
+    risk_per_share = max(price - stop, 1e-9)
+    rr1 = (target1 - price) / risk_per_share
+
+    # Risk ratio (Explainable hybrid)
+    risk_ratio = BASE_RISK
+    # AI scaling
+    if ai_prob > 0.75:
+        risk_ratio *= 1.40
+    elif ai_prob > 0.65:
+        risk_ratio *= 1.20
+    elif ai_prob < 0.55:
+        risk_ratio *= 0.60
+
+    # Regime scaling
+    if regime == "COMPRESSION":
+        risk_ratio *= 0.70
+    if regime == "CONTRACTION":
+        risk_ratio = 0.0
+
+    # Strong confluence bonus: compression energy + acceleration
+    if comp_ok and accel_ok:
+        risk_ratio *= 1.10
+
+    # Hard cap
+    risk_ratio = min(risk_ratio, MAX_RISK_CAP)
+
+    # Must-skip conditions
+    if fail_ok:
+        return TradePlan(
+            verdict="❌ 不交易（假突破反轉風險）",
+            reason="偵測到突破失敗 + 放量轉弱（避免做多）",
+            regime=regime,
+            price=price,
+            entry_zone=(entry_low, entry_high),
+            stop=stop,
+            target1=target1,
+            target2=target2,
+            rr1=float(rr1),
+            risk_ratio=0.0,
+            shares=0,
+            position_value=0.0,
+            risk_amount=0.0,
+            ai_prob=ai_prob,
+        )
+
+    # Core confluence condition (explainable)
+    confluence_ok = bool(trend_ok and momentum_ok and vol_ok and accel_ok)
+
+    # RR filter
+    if rr1 < MIN_RR:
+        return TradePlan(
+            verdict="⚠ 觀察（RR 不足）",
+            reason=f"RR={rr1:.2f} < {MIN_RR}，不符合高品質交易",
+            regime=regime,
+            price=price,
+            entry_zone=(entry_low, entry_high),
+            stop=stop,
+            target1=target1,
+            target2=target2,
+            rr1=float(rr1),
+            risk_ratio=0.0,
+            shares=0,
+            position_value=0.0,
+            risk_amount=0.0,
+            ai_prob=ai_prob,
+        )
+
+    # Decide
+    if (regime != "EXPANSION") or (not confluence_ok) or (ai_prob < 0.55):
+        return TradePlan(
+            verdict="⚠ 觀察",
+            reason="尚未達到趨勢/量價/動能/AI 勝率的共振條件",
+            regime=regime,
+            price=price,
+            entry_zone=(entry_low, entry_high),
+            stop=stop,
+            target1=target1,
+            target2=target2,
+            rr1=float(rr1),
+            risk_ratio=0.0,
+            shares=0,
+            position_value=0.0,
+            risk_amount=0.0,
+            ai_prob=ai_prob,
+        )
+
+    # Position sizing (max 2–3 stocks concept baked in via cap)
+    shares, position_value, risk_amount = calc_position_size(
+        total_capital=total_capital,
+        stock_ratio=stock_ratio,
+        max_positions=max_positions,
+        price=price,
+        stop=stop,
+        risk_ratio=risk_ratio,
+    )
+
+    if shares <= 0:
+        return TradePlan(
+            verdict="⚠ 觀察（無法計算有效股數）",
+            reason="停損距離過小或資料異常導致股數=0",
+            regime=regime,
+            price=price,
+            entry_zone=(entry_low, entry_high),
+            stop=stop,
+            target1=target1,
+            target2=target2,
+            rr1=float(rr1),
+            risk_ratio=0.0,
+            shares=0,
+            position_value=0.0,
+            risk_amount=0.0,
+            ai_prob=ai_prob,
+        )
+
+    return TradePlan(
+        verdict="✅ 可執行（規則 + AI 共振）",
+        reason="趨勢結構 + 量能健康 + 壓縮/加速 + AI 勝率通過 + RR 合格",
+        regime=regime,
+        price=price,
+        entry_zone=(entry_low, entry_high),
+        stop=stop,
+        target1=target1,
+        target2=target2,
+        rr1=float(rr1),
+        risk_ratio=risk_ratio,
+        shares=shares,
+        position_value=position_value,
+        risk_amount=risk_amount,
+        ai_prob=ai_prob,
+    )
 
 # =========================
 # UI
 # =========================
-st.title(APP_TITLE)
+with st.sidebar:
+    st.header("⚙️ 參數（可解釋混合）")
+    symbol = st.text_input("台股代碼（例：2330 / 6274）", "2330")
+    total_capital = st.number_input("總資產（NTD）", min_value=100_000, value=DEFAULT_TOTAL_CAPITAL, step=100_000)
+    stock_ratio = st.slider("股票投入比例", 0.05, 0.80, float(DEFAULT_STOCK_RATIO), 0.05)
+    max_positions = st.selectbox("同時持股上限（集中）", [2, 3], index=1)
 
-mode = st.sidebar.radio("選擇模式", ["單一股票分析", "Top 10 掃描器"])
-period = st.sidebar.selectbox("資料期間", ["3mo", "6mo", "12mo"], index=1)
-show_debug = st.sidebar.checkbox("顯示下載除錯資訊（Debug）", value=False)
+    auto_refresh = st.checkbox("盤中自動刷新（每 5 分鐘）", value=True)
+    if auto_refresh:
+        # refresh (no extra deps)
+        st.caption("已啟用自動刷新（5 分鐘）")
+        st.experimental_set_query_params(_ts=str(dt.datetime.now().timestamp()))
 
-with st.sidebar.expander("🧪 網路測試（建議先按一次）", expanded=False):
-    if st.button("Run network test"):
-        st.dataframe(net_test(), use_container_width=True)
+# Autorefresh mechanism
+if auto_refresh:
+    # simple JS-free rerun trigger via meta refresh
+    st.markdown("<meta http-equiv='refresh' content='300'>", unsafe_allow_html=True)
 
-if mode == "單一股票分析":
-    code = _norm_code(st.text_input("請輸入股票代號", "2330"))
-    df, src, trace = download_data_with_trace(code, period=period)
+st.title("🧠 V21.5 單檔精準版（可解釋混合AI）")
 
-    if df is None:
-        st.error("❌ 無法取得資料（所有備援來源都失敗）。")
-        st.subheader("🧩 逐路診斷（哪一路失敗、為什麼）")
-        st.dataframe(pd.DataFrame(trace), use_container_width=True)
-        st.stop()
+# Load and compute
+try:
+    df_raw = load_data(symbol)
+except Exception as e:
+    st.error(str(e))
+    st.stop()
 
-    df = calc_indicators(df)
-    info = now_action(df)
+df = add_features(df_raw)
+df = df.dropna()
 
-    # Header
-    st.success(f"✅ 取得資料成功 | 代號: {code} | Source: {src}")
+if len(df) < 200:
+    st.warning("資料不足（至少需要約 200 根日K 才能穩定運算）")
+    st.stop()
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("當下建議", info["action"])
-    c2.metric("信心", f'{info["confidence"]}%')
-    c3.metric("目前價格", round(info["close"], 2))
-    c4.metric("AI 共振分數", f'{info["score"]}/100')
+plan = build_trade_plan(df, total_capital=total_capital, stock_ratio=stock_ratio, max_positions=max_positions)
 
-    # 明確可判讀的買賣點資訊
-    st.subheader("📌 當下是否為買點/賣點？（可操作判斷）")
-    if info["action"] == "買點":
-        st.info("✅ **偏買**：目前條件達成共振（或已進入買區），可分批佈局 / 等回測確認。")
-    elif info["action"] == "賣點":
-        st.warning("✅ **偏賣**：目前條件偏高檔/壓力，適合減碼或等待回檔。")
-    else:
-        st.write("⏳ **觀望**：條件尚未明確，等待價格進入區間或指標翻轉。")
+# =========
+# Summary Row
+# =========
+c1, c2, c3, c4 = st.columns([1.4, 1, 1, 1])
+with c1:
+    st.subheader("📌 結論")
+    st.write(plan.verdict)
+    st.caption(plan.reason)
+with c2:
+    st.subheader("🧭 Regime")
+    st.metric("市場狀態", plan.regime)
+with c3:
+    st.subheader("🤖 AI")
+    st.metric("勝率（5日）", f"{plan.ai_prob:.2f}")
+with c4:
+    st.subheader("🎯 RR")
+    st.metric("RR(目標1)", f"{plan.rr1:.2f}")
 
-    if info["reasons"]:
-        st.caption("理由： " + " / ".join(info["reasons"]))
+# =========
+# Trade Plan
+# =========
+st.subheader("📋 交易計畫（可直接執行）")
+tp1, tp2, tp3, tp4 = st.columns(4)
+tp1.metric("現價", f"{plan.price:.2f}")
+tp2.metric("進場區", f"{plan.entry_zone[0]:.2f} ~ {plan.entry_zone[1]:.2f}")
+tp3.metric("停損", f"{plan.stop:.2f}")
+tp4.metric("目標1 / 目標2", f"{plan.target1:.2f} / {plan.target2:.2f}")
 
-    # 未來預估區間 + 距離（重點）
-    st.subheader("🗺️ 未來預估買賣點（區間 + 距離%）")
-    colA, colB = st.columns(2)
+tp5, tp6, tp7, tp8 = st.columns(4)
+tp5.metric("風險比例", f"{plan.risk_ratio*100:.2f}%")
+tp6.metric("建議股數", f"{plan.shares:,d} 股")
+tp7.metric("投入金額", f"{plan.position_value:,.0f} NTD")
+tp8.metric("風險金額(約)", f"{plan.risk_amount:,.0f} NTD")
 
-    with colA:
-        bz = info["buy_zone"]
-        if bz:
-            st.success(f"預估買點區間：**{bz[0]:.2f} ~ {bz[1]:.2f}**")
-            if info["dist_to_buy_pct"] is not None:
-                st.caption(f"目前價距離買區中心：{info['dist_to_buy_pct']:.2f}%（負值=低於中心，正值=高於中心）")
-            st.caption("狀態：" + ("✅ 已進入買區" if info["in_buy_zone"] else "尚未進入買區"))
-        else:
-            st.warning("買點區間：資料不足（需更多K線）")
+# =========
+# Explainability Panel
+# =========
+st.subheader("🔍 可解釋檢查（你可以用來判斷真假訊號）")
+vol_ok, vol_dbg = volume_filter(df)
+comp_ok, comp_dbg = compression_energy_signal(df)
+fail_ok, fail_dbg = failed_breakout_signal(df)
+acc_ok, acc_dbg = momentum_acceleration_signal(df)
 
-    with colB:
-        sz = info["sell_zone"]
-        if sz:
-            st.success(f"預估賣點區間：**{sz[0]:.2f} ~ {sz[1]:.2f}**")
-            if info["dist_to_sell_pct"] is not None:
-                st.caption(f"目前價距離賣區中心：{info['dist_to_sell_pct']:.2f}%（負值=低於中心，正值=高於中心）")
-            st.caption("狀態：" + ("✅ 已進入賣區" if info["in_sell_zone"] else "尚未進入賣區"))
-        else:
-            st.warning("賣點區間：資料不足（需更多K線）")
+e1, e2, e3, e4 = st.columns(4)
+e1.write("**量能健康**")
+e1.write(f"- vol_ratio: {vol_dbg['vol_ratio']:.2f}")
+e1.write(f"- distribution: {bool(vol_dbg['distribution'])}")
+e1.write(f"- ✅通過: {vol_ok}")
 
-    # 圖表
-    st.subheader("📈 收盤價走勢（視覺判讀）")
-    st.line_chart(df["Close"])
+e2.write("**壓縮能量**")
+e2.write(f"- bb_width: {comp_dbg['bb_width']:.2f}")
+e2.write(f"- atr_ratio: {comp_dbg['atr_ratio']:.2f}")
+e2.write(f"- 压缩天数: {int(comp_dbg['compression_days'])}")
+e2.write(f"- near_high: {bool(comp_dbg['near_high'])}")
+e2.write(f"- ✅通過: {comp_ok}")
 
-    if show_debug:
-        st.subheader("🛠 Debug Trace")
-        st.dataframe(pd.DataFrame(trace), use_container_width=True)
+e3.write("**假突破反轉**")
+e3.write(f"- breakout_yday: {bool(fail_dbg.get('breakout_yday',0))}")
+e3.write(f"- failed_return: {bool(fail_dbg.get('failed_return',0))}")
+e3.write(f"- vol_ratio: {fail_dbg.get('vol_ratio',0):.2f}")
+e3.write(f"- rsi_rollover: {bool(fail_dbg.get('rsi_rollover',0))}")
+e3.write(f"- ⚠偵測: {fail_ok}")
 
-else:
-    st.caption("Top10 掃描器：先用小池測試（避免全市場在 Cloud 超時）。")
-    stock_pool = ["2330", "2317", "2303", "2454", "2382", "3037", "8046", "6274", "4967"]
+e4.write("**動能加速**")
+e4.write(f"- slope_up: {bool(acc_dbg['slope_up'])}")
+e4.write(f"- accel_up: {bool(acc_dbg['accel_up'])}")
+e4.write(f"- mom_5: {acc_dbg['mom_5']:.3f}")
+e4.write(f"- mom_10: {acc_dbg['mom_10']:.3f}")
+e4.write(f"- ✅通過: {acc_ok}")
 
-    result = scan_top10(stock_pool, period=period)
+# =========
+# Chart
+# =========
+st.subheader("📈 走勢（含 EMA / 布林壓縮指標）")
+chart_df = pd.DataFrame(index=df.index)
+chart_df["Close"] = df["close"]
+chart_df["EMA20"] = df["ema20"]
+chart_df["EMA60"] = df["ema60"]
+st.line_chart(chart_df)
 
-    st.subheader("🔥 AI 強勢股 Top 10（含當下買賣判斷 + 未來區間）")
-    if result.empty:
-        st.warning("目前掃描結果為空（代表 pool 內股票都抓不到或不足K線）。建議切回單股模式看逐路診斷表。")
-    else:
-        st.dataframe(result, use_container_width=True)
+# Additional indicator charts (simple)
+i1, i2, i3 = st.columns(3)
+with i1:
+    st.caption("BB Width（越低越壓縮）")
+    st.line_chart(df[["bb_width"]])
+with i2:
+    st.caption("Volume Ratio（>1.2 代表放量健康）")
+    st.line_chart(df[["vol_ratio"]])
+with i3:
+    st.caption("EMA Acceleration（>0 代表動能加速）")
+    st.line_chart(df[["ema_accel"]])
 
-        st.caption("排序邏輯：買點優先 → AI分數高者優先 → 越接近買區者優先。")
+st.info("提示：盤中刷新只是更新你的「風控與計畫」，不是鼓勵頻繁交易。你仍然用日K做決策，盤中只用來提早風控。")
