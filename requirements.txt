@@ -1,9 +1,5 @@
 streamlit
 pandas
 numpy
-requests
-python-dateutil
 yfinance
-pandas-datareader
-lxml
-html5lib
+ta
