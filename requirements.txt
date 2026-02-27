@@ -1,6 +1,13 @@
 streamlit
+
 pandas
+
 numpy
-requests
+
 matplotlib
+
+requests
+
 yfinance
+
+pandas-datareader
