@@ -1,13 +1,9 @@
 streamlit
-
 pandas
-
 numpy
-
 matplotlib
-
 requests
-
 yfinance
-
 pandas-datareader
+lxml
+html5lib
