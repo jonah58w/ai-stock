@@ -1,17 +1,20 @@
 # app.py
-# AI 台股量化專業平台（最終極全備援 + 逐路診斷 / 不自動下單 / 無 Plotly）
-# ✅ 單股分析 + Top10 掃描器
-# ✅ 多來源備援：yfinance → TWSE(JSON) → TPEX(JSON)
-# ✅ 逐路診斷（哪一路失敗、為什麼）
-# ✅ 指標：BB(20,2) / EMA20 / MACD / KD / 乖離率 / 成交量
-# ✅ 布林通道分析圖（K線 + BB + EMA20 + Volume）—純 matplotlib，無外掛
-# ✅ 修正 date 欄位 KeyError：強制把日期變成 DatetimeIndex
-# ⚠️ 僅做資訊顯示，不含自動下單
+# 🧠 AI 台股量化專業平台（最終極全備援 + 逐路診斷 / 不自動下單 / 無 Plotly）
+# ✅ 單一股票分析：當下 BUY/SELL/WATCH + 理由 + 未來預估買賣點（近端/深回檔/近端賣點）
+# ✅ Top10 掃描：小池 stock_pool、去重、顯示「操作判斷 + 距離%」
+# ✅ 逐路診斷：顯示每個資料源的狀態（HTTP/內容/錯誤片段）
+# ✅ 指標：EMA20/EMA60、MACD、KD(隨機)、RSI、乖離率、布林通道、成交量均線
+# ✅ 圖：Matplotlib K線 + BB + EMA20 + Volume（無 plotly）
+# ✅ 資料源備援順序（可改）：TWSE_JSON -> Yahoo (yfinance) -> 使用者上傳CSV
+#    - TWSE/TPEX：優先用 TWSE 的 STOCK_DAY JSON（Streamlit Cloud 最穩）
+#    - 上櫃若 TWSE 取不到，會自動改用 yfinance .TWO（若 Cloud 擋 Yahoo，仍可用上傳CSV當最後備援）
 
 from __future__ import annotations
 
-import math
+import io
+import re
 import time
+import math
 import json
 import datetime as dt
 from dataclasses import dataclass
@@ -22,874 +25,864 @@ import pandas as pd
 import requests
 import streamlit as st
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+
 
 # -----------------------------
 # 基本設定
 # -----------------------------
-APP_TITLE = "🧠 AI 台股量化專業平台（最終極全備援 + 逐路診斷 / 不自動下單 / 無 Plotly）"
+APP_TITLE = "🧠 AI 台股量化專業平台（最終極全備援 + 逐路診斷版 / 不自動下單 / 無 Plotly）"
 
-DEFAULT_POOL = [
-    "2330", "2317", "2454", "2382", "3037", "2303", "2408", "2882", "1301", "1101",
-    "2603", "2618", "0050", "00878", "006208", "4967", "8046", "6274"
-]
-
-PERIOD_TO_DAYS = {
-    "3mo": 90,
-    "6mo": 180,
-    "1y": 365,
-    "2y": 730,
-}
-
-REQ_TIMEOUT = 12
-REQ_RETRY = 2
+DEFAULT_POOL = """00878
+006208
+4967
+8046
+6274
+2330
+2317
+2454
+2382
+2303
+"""
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
     "Connection": "keep-alive",
 }
 
-# -----------------------------
-# 資料結構：診斷紀錄
-# -----------------------------
-@dataclass
-class FetchLog:
-    source: str
-    ok: bool
-    result: str
-    url: str
-    status: Optional[int] = None
-    snippet: str = ""
+PERIOD_MAP = {
+    "3mo": 3,
+    "6mo": 6,
+    "1y": 12,
+    "2y": 24,
+    "5y": 60,
+}
 
 
 # -----------------------------
-# 工具：日期與代號
+# 小工具
 # -----------------------------
-def _today_taipei() -> dt.date:
-    # Streamlit Cloud 可能不是台北時區；這裡用 UTC+8 的日期概念處理
-    now_utc = dt.datetime.utcnow()
-    now_tpe = now_utc + dt.timedelta(hours=8)
-    return now_tpe.date()
+def _now_taipei() -> dt.datetime:
+    # Streamlit Cloud 可能是 UTC，這裡用固定 +8 顯示用
+    return dt.datetime.utcnow() + dt.timedelta(hours=8)
 
+def _to_float(x) -> float:
+    if x is None:
+        return np.nan
+    if isinstance(x, (int, float, np.floating)):
+        return float(x)
+    s = str(x).strip()
+    if s in ("", "--", "—", "-", "None", "nan", "NaN"):
+        return np.nan
+    s = s.replace(",", "")
+    try:
+        return float(s)
+    except:
+        return np.nan
 
-def normalize_stock_id(s: str) -> str:
-    s = (s or "").strip().upper()
-    # 允許輸入 2330.TW / 2330.TWO / 0050.TW 等
-    s = s.replace(".TW", "").replace(".TWO", "")
+def _clean_stock_id(s: str) -> str:
+    s = (s or "").strip()
+    s = re.sub(r"\s+", "", s)
+    s = s.replace(".TW", "").replace(".TWO", "").replace(".two", "").replace(".tw", "")
     return s
 
+def _unique_keep_order(items: List[str]) -> List[str]:
+    seen = set()
+    out = []
+    for x in items:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
 
-def is_etf(stock_id: str) -> bool:
-    # 粗略：ETF 常見為 00xxx / 00xxxx
-    return stock_id.startswith("00")
-
-
-def guess_market_suffix(stock_id: str) -> List[str]:
-    # yfinance：上市 .TW，上櫃 .TWO
-    # 先猜 .TW，再試 .TWO
-    return [".TW", ".TWO"]
-
-
-# -----------------------------
-# 核心：HTTP 取資料（含 retry）
-# -----------------------------
-def http_get(url: str, params: Optional[dict] = None) -> Tuple[Optional[requests.Response], Optional[str]]:
-    last_err = None
-    for i in range(REQ_RETRY + 1):
-        try:
-            r = requests.get(url, params=params, headers=HEADERS, timeout=REQ_TIMEOUT)
-            return r, None
-        except Exception as e:
-            last_err = str(e)
-            time.sleep(0.6 * (i + 1))
-    return None, last_err
+def _is_taiwan_stock_id(s: str) -> bool:
+    return bool(re.fullmatch(r"\d{4,6}", s))
 
 
 # -----------------------------
-# 來源 1：yfinance（若被擋會失敗）
+# 指標計算（不用 ta-lib / plotly）
 # -----------------------------
-@st.cache_data(show_spinner=False, ttl=60 * 10)
-def fetch_yfinance(stock_id: str, days: int) -> Tuple[Optional[pd.DataFrame], List[FetchLog], str]:
-    logs: List[FetchLog] = []
-    stock_id = normalize_stock_id(stock_id)
+def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    # 基本欄位保護
+    for c in ["Open", "High", "Low", "Close", "Volume"]:
+        if c not in df.columns:
+            df[c] = np.nan
 
-    try:
-        import yfinance as yf  # 延遲 import：避免環境缺失時整個 app 掛掉
-    except Exception as e:
-        logs.append(FetchLog("YF", False, f"NO_MODULE: {e}", url="(import yfinance)"))
-        return None, logs, "YF"
+    close = df["Close"].astype(float)
 
-    for suf in guess_market_suffix(stock_id):
-        ticker = f"{stock_id}{suf}"
-        try:
-            df = yf.download(
-                ticker,
-                period=f"{max(7, days)}d",
-                interval="1d",
-                auto_adjust=False,
-                progress=False,
-                threads=False,
-            )
-            # yfinance 有時回 MultiIndex 欄位
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = [c[0] for c in df.columns]
+    # EMA
+    df["EMA20"] = close.ewm(span=20, adjust=False).mean()
+    df["EMA60"] = close.ewm(span=60, adjust=False).mean()
 
-            if df is None or df.empty:
-                logs.append(FetchLog("YF", False, "EMPTY", url=f"yfinance:{ticker}"))
-                continue
+    # MACD (12,26,9)
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    df["MACD"] = ema12 - ema26
+    df["MACD_signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
+    df["MACD_hist"] = df["MACD"] - df["MACD_signal"]
 
-            df = df.rename(columns={
-                "Open": "open", "High": "high", "Low": "low", "Close": "close", "Adj Close": "adj_close", "Volume": "volume"
-            })
+    # RSI(14)
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / (loss.replace(0, np.nan))
+    df["RSI14"] = 100 - (100 / (1 + rs))
 
-            # 強制 DatetimeIndex
-            if not isinstance(df.index, pd.DatetimeIndex):
-                df.index = pd.to_datetime(df.index, errors="coerce")
-            df = df.dropna(subset=["close"])
-            df = df.sort_index()
-            df = df.tail(days + 5)
+    # KD (Stochastic %K(9), %D(3))
+    low9 = df["Low"].rolling(9).min()
+    high9 = df["High"].rolling(9).max()
+    k = 100 * (close - low9) / (high9 - low9).replace(0, np.nan)
+    df["K"] = k.rolling(3).mean()
+    df["D"] = df["K"].rolling(3).mean()
 
-            if len(df) < 60:
-                logs.append(FetchLog("YF", False, f"TOO_SHORT({len(df)})", url=f"yfinance:{ticker}"))
-                continue
+    # 乖離率（相對 EMA20）
+    df["Bias20"] = (close / df["EMA20"] - 1.0) * 100.0
 
-            logs.append(FetchLog("YF", True, "OK", url=f"yfinance:{ticker}"))
-            return df[["open", "high", "low", "close", "volume"]].copy(), logs, f"YF{suf}"
+    # Bollinger(20,2)
+    mid = close.rolling(20).mean()
+    std = close.rolling(20).std(ddof=0)
+    df["BB_mid"] = mid
+    df["BB_upper"] = mid + 2 * std
+    df["BB_lower"] = mid - 2 * std
 
-        except Exception as e:
-            logs.append(FetchLog("YF", False, f"EXCEPTION: {e}", url=f"yfinance:{ticker}"))
-            continue
+    # 量能均線
+    df["VMA20"] = df["Volume"].rolling(20).mean()
 
-    return None, logs, "YF"
+    return df
 
 
 # -----------------------------
-# 來源 2：TWSE（上市）— JSON
-# STOCK_DAY?response=json&date=YYYYMMDD&stockNo=2330
+# 買賣點區間（讓買點不要離現價太遠）
 # -----------------------------
-def _yyyymmdd(d: dt.date) -> str:
-    return d.strftime("%Y%m%d")
-
-
-@st.cache_data(show_spinner=False, ttl=60 * 30)
-def fetch_twse_json(stock_id: str, days: int) -> Tuple[Optional[pd.DataFrame], List[FetchLog], str]:
-    logs: List[FetchLog] = []
-    stock_id = normalize_stock_id(stock_id)
-
-    end = _today_taipei()
-    start = end - dt.timedelta(days=days + 15)
-
-    # 逐月抓（TWSE 是月資料）
-    months = []
-    cursor = dt.date(start.year, start.month, 1)
-    while cursor <= end:
-        months.append(cursor)
-        # next month
-        y = cursor.year + (cursor.month // 12)
-        m = 1 if cursor.month == 12 else cursor.month + 1
-        cursor = dt.date(y, m, 1)
-
-    all_rows = []
-
-    for m0 in months[-10:]:  # 6mo/1y 通常夠用，避免太多請求
-        url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
-        params = {"response": "json", "date": _yyyymmdd(m0), "stockNo": stock_id}
-        r, err = http_get(url, params=params)
-        if r is None:
-            logs.append(FetchLog("TWSE_JSON", False, f"NET_ERR: {err}", url=f"{url}?{params}"))
-            continue
-
-        status = r.status_code
-        text = r.text or ""
-        snip = text[:120].replace("\n", " ").replace("\r", " ")
-
-        if status != 200:
-            logs.append(FetchLog("TWSE_JSON", False, f"HTTP_{status}", url=r.url, status=status, snippet=snip))
-            continue
-
-        # 可能回傳空字串、或非 JSON
-        try:
-            data = r.json()
-        except Exception:
-            logs.append(FetchLog("TWSE_JSON", False, "NOT_JSON", url=r.url, status=status, snippet=snip))
-            continue
-
-        if not isinstance(data, dict) or ("data" not in data):
-            logs.append(FetchLog("TWSE_JSON", False, "BAD_SCHEMA", url=r.url, status=status, snippet=snip))
-            continue
-
-        rows = data.get("data", [])
-        if not rows:
-            logs.append(FetchLog("TWSE_JSON", False, "EMPTY_DATA", url=r.url, status=status, snippet=snip))
-            continue
-
-        # TWSE 日期是民國：112/01/03
-        for row in rows:
-            try:
-                roc_date = row[0].strip()
-                yy, mm, dd = roc_date.split("/")
-                y = int(yy) + 1911
-                date = dt.date(y, int(mm), int(dd))
-                open_ = float(str(row[3]).replace(",", ""))
-                high_ = float(str(row[4]).replace(",", ""))
-                low_ = float(str(row[5]).replace(",", ""))
-                close_ = float(str(row[6]).replace(",", ""))
-                vol = float(str(row[1]).replace(",", ""))  # 成交股數
-                all_rows.append((date, open_, high_, low_, close_, vol))
-            except Exception:
-                continue
-
-        logs.append(FetchLog("TWSE_JSON", True, f"OK({len(rows)})", url=r.url, status=status))
-
-    if not all_rows:
-        return None, logs, "TWSE_JSON"
-
-    df = pd.DataFrame(all_rows, columns=["date", "open", "high", "low", "close", "volume"])
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.drop_duplicates(subset=["date"]).sort_values("date")
-    df = df.set_index("date")
-    df = df.tail(days + 5)
-
-    if len(df) < 60:
-        logs.append(FetchLog("TWSE_JSON", False, f"TOO_SHORT({len(df)})", url="(merged)"))
-        return None, logs, "TWSE_JSON"
-
-    return df, logs, "TWSE_JSON"
-
-
-# -----------------------------
-# 來源 3：TPEX（上櫃）— JSON
-# st43_result.php?l=zh-tw&d=YYY/MM/DD&stkno=xxxx
-# -----------------------------
-def _roc_yyy_mm_dd(d: dt.date) -> str:
-    y = d.year - 1911
-    return f"{y}/{d.month:02d}/{d.day:02d}"
-
-
-@st.cache_data(show_spinner=False, ttl=60 * 30)
-def fetch_tpex_json(stock_id: str, days: int) -> Tuple[Optional[pd.DataFrame], List[FetchLog], str]:
-    logs: List[FetchLog] = []
-    stock_id = normalize_stock_id(stock_id)
-
-    end = _today_taipei()
-    start = end - dt.timedelta(days=days + 15)
-
-    # 逐月抓（TPEX 也常用月查）
-    months = []
-    cursor = dt.date(start.year, start.month, 1)
-    while cursor <= end:
-        months.append(cursor)
-        y = cursor.year + (cursor.month // 12)
-        m = 1 if cursor.month == 12 else cursor.month + 1
-        cursor = dt.date(y, m, 1)
-
-    all_rows = []
-
-    for m0 in months[-10:]:
-        url = "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-        params = {"l": "zh-tw", "d": _roc_yyy_mm_dd(m0), "stkno": stock_id}
-        r, err = http_get(url, params=params)
-        if r is None:
-            logs.append(FetchLog("TPEX_JSON", False, f"NET_ERR: {err}", url=f"{url}?{params}"))
-            continue
-
-        status = r.status_code
-        text = r.text or ""
-        snip = text[:120].replace("\n", " ").replace("\r", " ")
-        if status != 200:
-            logs.append(FetchLog("TPEX_JSON", False, f"HTTP_{status}", url=r.url, status=status, snippet=snip))
-            continue
-
-        try:
-            data = r.json()
-        except Exception:
-            logs.append(FetchLog("TPEX_JSON", False, "NOT_JSON", url=r.url, status=status, snippet=snip))
-            continue
-
-        rows = data.get("aaData") or data.get("data") or []
-        if not rows:
-            logs.append(FetchLog("TPEX_JSON", False, "EMPTY_DATA", url=r.url, status=status, snippet=snip))
-            continue
-
-        # TPEX 欄位常見：日期、成交股數、成交金額、開盤、最高、最低、收盤...
-        for row in rows:
-            try:
-                roc_date = str(row[0]).strip()
-                yy, mm, dd = roc_date.split("/")
-                y = int(yy) + 1911
-                date = dt.date(y, int(mm), int(dd))
-                open_ = float(str(row[3]).replace(",", ""))
-                high_ = float(str(row[4]).replace(",", ""))
-                low_ = float(str(row[5]).replace(",", ""))
-                close_ = float(str(row[6]).replace(",", ""))
-                vol = float(str(row[1]).replace(",", ""))
-                all_rows.append((date, open_, high_, low_, close_, vol))
-            except Exception:
-                continue
-
-        logs.append(FetchLog("TPEX_JSON", True, f"OK({len(rows)})", url=r.url, status=status))
-
-    if not all_rows:
-        return None, logs, "TPEX_JSON"
-
-    df = pd.DataFrame(all_rows, columns=["date", "open", "high", "low", "close", "volume"])
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.drop_duplicates(subset=["date"]).sort_values("date")
-    df = df.set_index("date")
-    df = df.tail(days + 5)
-
-    if len(df) < 60:
-        logs.append(FetchLog("TPEX_JSON", False, f"TOO_SHORT({len(df)})", url="(merged)"))
-        return None, logs, "TPEX_JSON"
-
-    return df, logs, "TPEX_JSON"
-
-
-# -----------------------------
-# 取資料：多路備援 + 診斷彙總
-# -----------------------------
-def fetch_data_all(stock_id: str, days: int) -> Tuple[Optional[pd.DataFrame], str, List[FetchLog]]:
-    logs_all: List[FetchLog] = []
-
-    # 1) yfinance
-    df, logs, src = fetch_yfinance(stock_id, days)
-    logs_all += logs
-    if df is not None and not df.empty:
-        return standardize_ohlcv(df), src, logs_all
-
-    # 2) TWSE JSON
-    df, logs, src = fetch_twse_json(stock_id, days)
-    logs_all += logs
-    if df is not None and not df.empty:
-        return standardize_ohlcv(df), src, logs_all
-
-    # 3) TPEX JSON
-    df, logs, src = fetch_tpex_json(stock_id, days)
-    logs_all += logs
-    if df is not None and not df.empty:
-        return standardize_ohlcv(df), src, logs_all
-
-    return None, "NONE", logs_all
-
-
-def standardize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    d = df.copy()
-
-    # 允許 date 欄或 index 是日期；最後統一成 DatetimeIndex
-    if "date" in d.columns:
-        d["date"] = pd.to_datetime(d["date"], errors="coerce")
-        d = d.dropna(subset=["date"]).set_index("date")
-
-    if not isinstance(d.index, pd.DatetimeIndex):
-        d.index = pd.to_datetime(d.index, errors="coerce")
-
-    d = d.dropna(subset=["close"]).sort_index()
-    # 補齊必要欄位
-    for c in ["open", "high", "low"]:
-        if c not in d.columns:
-            d[c] = d["close"]
-    if "volume" not in d.columns:
-        d["volume"] = 0.0
-
-    d = d[["open", "high", "low", "close", "volume"]].copy()
-    d = d.replace([np.inf, -np.inf], np.nan).dropna(subset=["close"])
-    return d
-
-
-# -----------------------------
-# 指標計算
-# -----------------------------
-def ema(series: pd.Series, span: int) -> pd.Series:
-    return series.ewm(span=span, adjust=False).mean()
-
-
-def sma(series: pd.Series, window: int) -> pd.Series:
-    return series.rolling(window).mean()
-
-
-def bollinger(close: pd.Series, window: int = 20, n_std: float = 2.0) -> Tuple[pd.Series, pd.Series, pd.Series]:
-    mid = sma(close, window)
-    std = close.rolling(window).std()
-    upper = mid + n_std * std
-    lower = mid - n_std * std
-    return upper, mid, lower
-
-
-def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[pd.Series, pd.Series, pd.Series]:
-    fast_ema = ema(close, fast)
-    slow_ema = ema(close, slow)
-    line = fast_ema - slow_ema
-    sig = ema(line, signal)
-    hist = line - sig
-    return line, sig, hist
-
-
-def kd(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 9, k: int = 3, d: int = 3) -> Tuple[pd.Series, pd.Series]:
-    low_n = low.rolling(n).min()
-    high_n = high.rolling(n).max()
-    rsv = (close - low_n) / (high_n - low_n) * 100
-    rsv = rsv.replace([np.inf, -np.inf], np.nan).fillna(0)
-
-    k_line = rsv.ewm(alpha=1 / k, adjust=False).mean()
-    d_line = k_line.ewm(alpha=1 / d, adjust=False).mean()
-    return k_line, d_line
-
-
-def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    d = df.copy()
-    d["ema20"] = ema(d["close"], 20)
-    d["sma20"] = sma(d["close"], 20)
-    d["bb_u"], d["bb_m"], d["bb_l"] = bollinger(d["close"], 20, 2.0)
-
-    d["macd"], d["macd_sig"], d["macd_hist"] = macd(d["close"])
-    d["k"], d["d"] = kd(d["high"], d["low"], d["close"])
-
-    d["bias20"] = (d["close"] / d["sma20"]) - 1.0
-    d["vol_ma20"] = sma(d["volume"], 20)
-    d["vol_ratio"] = d["volume"] / d["vol_ma20"]
-    d["vol_ratio"] = d["vol_ratio"].replace([np.inf, -np.inf], np.nan)
-
-    return d
-
-
-# -----------------------------
-# 判斷：當下操作 + 近端/深回檔買點 + 近端賣點
-# -----------------------------
-def clamp(x: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, x))
-
-
-def resonance_score(d: pd.DataFrame) -> int:
-    """0-100：多指標共振（偏實用、偏保守）"""
-    if len(d) < 60:
-        return 0
-
-    r = d.iloc[-1]
-    score = 0.0
-
-    # 1) 布林位置（越接近下軌偏買；越接近上軌偏賣，但也算「有訊號」）
-    if pd.notna(r["bb_u"]) and pd.notna(r["bb_l"]) and (r["bb_u"] > r["bb_l"]):
-        pos = (r["close"] - r["bb_l"]) / (r["bb_u"] - r["bb_l"])  # 0~1
-        # 靠近兩端都給分，中間較少
-        edge = 1 - abs(pos - 0.5) * 2  # 中間=0，兩端=1
-        score += (edge * 30)
-
-    # 2) EMA20 趨勢（站上加分）
-    if pd.notna(r["ema20"]):
-        score += (15 if r["close"] >= r["ema20"] else 8)
-
-    # 3) MACD 動能
-    if pd.notna(r["macd_hist"]):
-        # hist 轉強給分
-        score += (15 if r["macd_hist"] > 0 else 7)
-
-    # 4) KD 超買超賣端點加分（有訊號）
-    if pd.notna(r["k"]):
-        if r["k"] <= 20:
-            score += 20
-        elif r["k"] >= 80:
-            score += 18
-        else:
-            score += 10
-
-    # 5) 量能（突破或放量）
-    if pd.notna(r["vol_ratio"]):
-        if r["vol_ratio"] >= 1.8:
-            score += 20
-        elif r["vol_ratio"] >= 1.2:
-            score += 12
-        else:
-            score += 6
-
-    return int(clamp(score, 0, 100))
-
-
-def estimate_zones(d: pd.DataFrame, max_buy_dist: float) -> Dict[str, object]:
+@dataclass
+class Zones:
+    action: str
+    reason: str
+    score: int
+    near_buy: Optional[Tuple[float, float]]
+    deep_buy: Optional[Tuple[float, float]]
+    near_sell: Optional[Tuple[float, float]]
+    near_buy_dist: Optional[float]
+    deep_buy_dist: Optional[float]
+    near_sell_dist: Optional[float]
+
+def _pct_dist(curr: float, lo: float, hi: float) -> float:
+    center = (lo + hi) / 2.0
+    if not np.isfinite(curr) or curr == 0:
+        return np.nan
+    return abs(center - curr) / curr
+
+def compute_zones(df: pd.DataFrame, max_buy_distance: float = 0.12) -> Zones:
     """
-    輸出：
-    - action: BUY / SELL / WATCH
-    - reason
-    - near_buy / deep_buy / near_sell：區間（low, high）與距離%
+    規則：
+    - 近端買點：以 BB_lower、EMA20、近 20 日區間支撐 組合（會更貼近現價）
+    - 深回檔買點：以 BB_lower 再往下加一個 std 的保守區
+    - 近端賣點：以 BB_upper 與近 20 日壓力區組合
+    - 若近端買點距離 > max_buy_distance：自動隱藏近端買點（避免「離現實太遠」）
     """
-    r = d.iloc[-1]
-    price = float(r["close"])
+    if df is None or len(df) < 60:
+        return Zones(
+            action="WATCH",
+            reason="資料不足（至少建議 60 根以上）",
+            score=0,
+            near_buy=None, deep_buy=None, near_sell=None,
+            near_buy_dist=None, deep_buy_dist=None, near_sell_dist=None
+        )
 
-    # 支撐/壓力：用 60 日區間
-    win = min(60, len(d))
-    support = float(d["low"].tail(win).min())
-    resist = float(d["high"].tail(win).max())
+    last = df.iloc[-1]
+    curr = float(last["Close"])
+    ema20 = float(last["EMA20"])
+    bb_l = float(last["BB_lower"])
+    bb_m = float(last["BB_mid"])
+    bb_u = float(last["BB_upper"])
 
-    bb_l = float(r["bb_l"]) if pd.notna(r["bb_l"]) else support
-    bb_u = float(r["bb_u"]) if pd.notna(r["bb_u"]) else resist
-    ema20_v = float(r["ema20"]) if pd.notna(r["ema20"]) else price
+    # 支撐/壓力（用近 20 日低點/高點做簡單區間）
+    window = df.iloc[-20:]
+    sup = float(window["Low"].min())
+    res = float(window["High"].max())
 
-    # 近端買點：下軌與支撐取較「近」者（避免太遠）
-    near_buy_center = max(bb_l, support)
-    deep_buy_center = min(bb_l, support)
+    # 近端買點（貼近現價的「可操作區」）
+    # 讓區間更合理：取 max(支撐, BB_lower, EMA20*0.97) 到 min(EMA20*0.995, BB_mid*0.98)
+    nb_lo = max(sup, bb_l, ema20 * 0.97)
+    nb_hi = min(ema20 * 0.995, bb_m * 0.985)
+    if nb_hi <= nb_lo:
+        # fallback：以 sup 附近做窄區
+        nb_lo = max(sup * 0.995, bb_l)
+        nb_hi = nb_lo * 1.01
 
-    # 近端賣點：上軌與壓力取較「近」者
-    near_sell_center = min(bb_u, resist)
+    # 深回檔買點（更保守）
+    # bb_l 再下移一點，但不要離譜：用近 60 日低點下緣附近
+    window60 = df.iloc[-60:]
+    low60 = float(window60["Low"].min())
+    db_lo = max(low60 * 0.995, bb_l * 0.92)
+    db_hi = min(bb_l * 0.98, low60 * 1.03)
+    if db_hi <= db_lo:
+        db_lo = low60 * 0.99
+        db_hi = low60 * 1.02
 
-    def band(center: float, width: float = 0.010) -> Tuple[float, float]:
-        return (center * (1 - width), center * (1 + width))
+    # 近端賣點（壓力/獲利）
+    ns_lo = max(bb_u * 0.985, res * 0.99)
+    ns_hi = max(ns_lo * 1.01, bb_u * 1.02)
+    # 防止過寬
+    ns_hi = min(ns_hi, curr * 1.25)
 
-    near_buy = band(near_buy_center, 0.010)
-    deep_buy = band(deep_buy_center, 0.012)
-    near_sell = band(near_sell_center, 0.011)
+    nb_dist = _pct_dist(curr, nb_lo, nb_hi)
+    db_dist = _pct_dist(curr, db_lo, db_hi)
+    ns_dist = _pct_dist(curr, ns_lo, ns_hi)
 
-    def dist_pct(center: float) -> float:
-        return (center - price) / price
+    # 若近端買點距離太遠，隱藏
+    near_buy = (round(nb_lo, 2), round(nb_hi, 2))
+    if np.isfinite(nb_dist) and nb_dist > max_buy_distance:
+        near_buy = None
 
-    near_buy_dist = dist_pct((near_buy[0] + near_buy[1]) / 2)
-    deep_buy_dist = dist_pct((deep_buy[0] + deep_buy[1]) / 2)
-    near_sell_dist = dist_pct((near_sell[0] + near_sell[1]) / 2)
+    deep_buy = (round(db_lo, 2), round(db_hi, 2))
+    near_sell = (round(ns_lo, 2), round(ns_hi, 2))
 
-    # 「可操作買點」：距離不能太遠（你要求的現實限制）
-    # 若太遠，近端買點就改成 None（只保留深回檔作參考）
-    near_buy_actionable = abs(near_buy_dist) <= max_buy_dist
+    # 當下操作判斷（可操作）
+    # BUY：價格接近/落入近端買點 + 指標轉強
+    # SELL：價格接近/落入近端賣點 + 指標轉弱
+    k = float(last["K"]) if np.isfinite(last["K"]) else np.nan
+    d = float(last["D"]) if np.isfinite(last["D"]) else np.nan
+    macd_h = float(last["MACD_hist"]) if np.isfinite(last["MACD_hist"]) else np.nan
+    rsi = float(last["RSI14"]) if np.isfinite(last["RSI14"]) else np.nan
 
-    # 當下判斷（偏保守，可操作）
+    def in_zone(z):
+        if z is None:
+            return False
+        lo, hi = z
+        return (curr >= lo) and (curr <= hi)
+
+    bullish_flip = (np.isfinite(macd_h) and macd_h > 0) or (np.isfinite(k) and np.isfinite(d) and k > d)
+    bearish_flip = (np.isfinite(macd_h) and macd_h < 0) or (np.isfinite(k) and np.isfinite(d) and k < d)
+
     action = "WATCH"
     reason = "條件尚未明確，等待價格進入區間或指標翻轉。"
 
-    k_now = float(r["k"]) if pd.notna(r["k"]) else 50.0
-    hist_now = float(r["macd_hist"]) if pd.notna(r["macd_hist"]) else 0.0
-    hist_prev = float(d["macd_hist"].iloc[-2]) if len(d) >= 2 and pd.notna(d["macd_hist"].iloc[-2]) else hist_now
-
-    in_near_buy_zone = (near_buy[0] <= price <= near_buy[1]) if near_buy_actionable else False
-    in_near_sell_zone = (near_sell[0] <= price <= near_sell[1])
-
-    macd_turn_up = (hist_now > hist_prev) and (hist_now > -0.5 * abs(hist_prev))
-    macd_turn_down = (hist_now < hist_prev)
-
-    # BUY：靠近下軌/支撐 + KD 低檔 + MACD 動能轉強
-    if in_near_buy_zone and (k_now <= 30) and macd_turn_up:
+    if near_buy and (in_zone(near_buy) or (np.isfinite(nb_dist) and nb_dist <= 0.03)) and bullish_flip:
         action = "BUY"
-        reason = "價格進入『近端買點區』且 KD 低檔、MACD 動能轉強，屬可操作回檔買點。"
+        reason = "價格接近/進入近端買點區，且指標轉強（MACD/KD）。"
+    elif in_zone(near_sell) or (np.isfinite(ns_dist) and ns_dist <= 0.03):
+        if bearish_flip or (np.isfinite(rsi) and rsi >= 70):
+            action = "SELL"
+            reason = "價格接近/進入近端賣點區，且指標轉弱或過熱（RSI/MACD/KD）。"
+        else:
+            action = "WATCH"
+            reason = "價格接近壓力區，但指標未轉弱；偏向觀望/分批獲利。"
 
-    # SELL：靠近壓力/上軌 + KD 高檔 + MACD 轉弱
-    elif in_near_sell_zone and (k_now >= 70) and macd_turn_down:
-        action = "SELL"
-        reason = "價格逼近『近端賣點區』且 KD 高檔、MACD 轉弱，適合減碼/停利/提高警覺。"
+    # 共振分數（100分）
+    score = 0
+    # 趨勢
+    if curr > ema20:
+        score += 15
+    if ema20 > float(last["EMA60"]):
+        score += 10
+    # 動能
+    if np.isfinite(macd_h) and macd_h > 0:
+        score += 15
+    if np.isfinite(k) and np.isfinite(d) and k > d:
+        score += 10
+    # 位置（靠近 BB_mid~upper 加分）
+    if np.isfinite(bb_m) and curr > bb_m:
+        score += 10
+    # 量能
+    v = float(last["Volume"]) if np.isfinite(last["Volume"]) else np.nan
+    vma = float(last["VMA20"]) if np.isfinite(last["VMA20"]) else np.nan
+    if np.isfinite(v) and np.isfinite(vma) and v > vma:
+        score += 10
+    # 乖離率不過熱
+    bias = float(last["Bias20"]) if np.isfinite(last["Bias20"]) else np.nan
+    if np.isfinite(bias) and abs(bias) <= 8:
+        score += 10
+    # RSI 中性偏強
+    if np.isfinite(rsi) and 45 <= rsi <= 70:
+        score += 10
 
-    # 特別提示：如果近端買點距離太遠，就明確標示
-    if not near_buy_actionable:
-        reason += f"（近端買點距離現價約 {abs(near_buy_dist)*100:.1f}%，超過可操作上限，僅保留深回檔區參考）"
+    score = int(min(100, max(0, score)))
 
-    return {
-        "price": price,
-        "ema20": ema20_v,
-        "support": support,
-        "resist": resist,
-        "action": action,
-        "reason": reason,
-        "near_buy": near_buy if near_buy_actionable else None,
-        "near_buy_dist": near_buy_dist,
-        "deep_buy": deep_buy,
-        "deep_buy_dist": deep_buy_dist,
-        "near_sell": near_sell,
-        "near_sell_dist": near_sell_dist,
-    }
+    return Zones(
+        action=action,
+        reason=reason,
+        score=score,
+        near_buy=near_buy,
+        deep_buy=deep_buy,
+        near_sell=near_sell,
+        near_buy_dist=(None if near_buy is None else float(nb_dist)),
+        deep_buy_dist=float(db_dist) if np.isfinite(db_dist) else None,
+        near_sell_dist=float(ns_dist) if np.isfinite(ns_dist) else None,
+    )
 
 
 # -----------------------------
-# 圖表：K線 + 布林 + EMA20 + 量（無 plotly）
+# Matplotlib K 線 + BB + EMA20 + Volume（無 plotly）
 # -----------------------------
-def plot_candles_with_bb(d: pd.DataFrame, title: str = "") -> plt.Figure:
-    # 取最後 N 根，避免太密
-    N = min(140, len(d))
-    dd = d.tail(N).copy()
-    dd = dd.dropna(subset=["open", "high", "low", "close"]).copy()
+def plot_bollinger_candles(df: pd.DataFrame, title: str = ""):
+    dfp = df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
+    if len(dfp) < 30:
+        fig = plt.figure(figsize=(10, 4))
+        plt.title("資料不足，無法繪圖")
+        return fig
 
-    x = np.arange(len(dd))
+    # 只畫最近 N 根，避免 Cloud 太慢
+    N = min(140, len(dfp))
+    dfp = dfp.iloc[-N:]
+    x = np.arange(len(dfp))
 
-    fig = plt.figure(figsize=(12.5, 6.8), dpi=120)
+    fig = plt.figure(figsize=(11, 6))
     gs = fig.add_gridspec(5, 1, hspace=0.05)
     ax = fig.add_subplot(gs[:4, 0])
     axv = fig.add_subplot(gs[4, 0], sharex=ax)
 
-    # K線
-    for i, (_, r) in enumerate(dd.iterrows()):
-        o, h, l, c = r["open"], r["high"], r["low"], r["close"]
-        up = (c >= o)
+    # Candles
+    o = dfp["Open"].values
+    h = dfp["High"].values
+    l = dfp["Low"].values
+    c = dfp["Close"].values
 
+    for i in range(len(dfp)):
+        up = c[i] >= o[i]
+        color = "#2ecc71" if up else "#e74c3c"
         # wick
-        ax.vlines(i, l, h, linewidth=1)
-
+        ax.vlines(x[i], l[i], h[i], color=color, linewidth=1)
         # body
-        body_low = min(o, c)
-        body_h = max(0.5e-6, abs(c - o))
-        rect = Rectangle((i - 0.35, body_low), 0.7, body_h, fill=True, alpha=0.85)
-        # 不指定顏色：用預設色系，但區分上/下用 alpha+edge
-        if up:
-            rect.set_edgecolor("black")
-        else:
-            rect.set_edgecolor("black")
-        ax.add_patch(rect)
+        body_low = min(o[i], c[i])
+        body_h = max(0.000001, abs(c[i] - o[i]))
+        ax.add_patch(Rectangle((x[i] - 0.35, body_low), 0.7, body_h, facecolor=color, edgecolor=color, alpha=0.9))
 
-    # BB + EMA20（線圖）
-    if "bb_u" in dd.columns:
-        ax.plot(x, dd["bb_u"].values, linewidth=1.2, label="BB Upper")
-    if "bb_m" in dd.columns:
-        ax.plot(x, dd["bb_m"].values, linewidth=1.0, label="BB Mid")
-    if "bb_l" in dd.columns:
-        ax.plot(x, dd["bb_l"].values, linewidth=1.2, label="BB Lower")
-    if "ema20" in dd.columns:
-        ax.plot(x, dd["ema20"].values, linewidth=1.2, label="EMA20")
+    # BB + EMA20
+    ax.plot(x, dfp["BB_upper"].values, linewidth=1.2, label="BB Upper")
+    ax.plot(x, dfp["BB_mid"].values, linewidth=1.2, label="BB Mid")
+    ax.plot(x, dfp["BB_lower"].values, linewidth=1.2, label="BB Lower")
+    ax.plot(x, dfp["EMA20"].values, linewidth=1.2, label="EMA20")
+
+    ax.set_title(title)
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="upper left", fontsize=9)
 
     # Volume
-    vol = dd["volume"].fillna(0).values
+    vol = dfp["Volume"].fillna(0).values
     axv.bar(x, vol, width=0.7)
+    axv.plot(x, dfp["VMA20"].fillna(0).values, linewidth=1.2, label="VMA20")
+    axv.grid(True, alpha=0.25)
+    axv.legend(loc="upper left", fontsize=9)
 
-    # X 軸日期標籤（稀疏顯示）
-    dates = dd.index.to_pydatetime()
+    # x ticks: date strings
+    dates = [d.strftime("%Y-%m-%d") for d in dfp.index]
     step = max(1, len(dates) // 6)
-    xticks = list(range(0, len(dates), step))
-    axv.set_xticks(xticks)
-    axv.set_xticklabels([dates[i].strftime("%Y-%m-%d") for i in xticks], rotation=0)
+    axv.set_xticks(x[::step])
+    axv.set_xticklabels(dates[::step], rotation=0, fontsize=9)
 
-    ax.set_title(title, fontsize=12)
-    ax.grid(True, linewidth=0.3, alpha=0.5)
-    axv.grid(True, linewidth=0.3, alpha=0.5)
-
-    ax.legend(loc="upper left", fontsize=9, frameon=False)
     plt.setp(ax.get_xticklabels(), visible=False)
-
     return fig
 
 
 # -----------------------------
-# UI：診斷顯示
+# 資料下載（逐路備援 + 診斷）
 # -----------------------------
-def logs_to_df(logs: List[FetchLog]) -> pd.DataFrame:
-    rows = []
-    for lg in logs:
-        rows.append({
-            "source": lg.source,
-            "result": ("OK" if lg.ok else lg.result),
-            "url": lg.url,
-            "status": lg.status,
-            "snippet": lg.snippet,
-        })
-    return pd.DataFrame(rows)
+@dataclass
+class FetchAttempt:
+    source: str
+    result: str
+    url: str
+    status: Optional[int]
+    snippet: str
 
+def _req_text(url: str, timeout: int = 12) -> Tuple[Optional[int], str, Optional[str]]:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=timeout)
+        txt = r.text if r is not None else ""
+        return (r.status_code, txt, None)
+    except Exception as e:
+        return (None, "", str(e))
 
-def render_diagnostics(logs: List[FetchLog]):
-    st.subheader("🧩 逐路診斷（哪一路失敗、為什麼）")
-    if not logs:
-        st.info("尚無診斷紀錄。")
-        return
-    st.dataframe(logs_to_df(logs), use_container_width=True, hide_index=True)
+def _req_json(url: str, timeout: int = 12) -> Tuple[Optional[int], Optional[dict], Optional[str], str]:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=timeout)
+        txt = r.text if r is not None else ""
+        try:
+            j = r.json()
+        except Exception:
+            j = None
+        return (r.status_code, j, None, txt[:200])
+    except Exception as e:
+        return (None, None, str(e), "")
 
+def _twse_month_list(months_back: int) -> List[dt.date]:
+    """回傳每個月的 1 號，用於 STOCK_DAY 按月抓"""
+    today = _now_taipei().date().replace(day=1)
+    out = []
+    y = today.year
+    m = today.month
+    for _ in range(months_back):
+        out.append(dt.date(y, m, 1))
+        m -= 1
+        if m <= 0:
+            m = 12
+            y -= 1
+    return list(reversed(out))
 
-def network_test_panel():
-    st.markdown("### 🧪 網路測試（建議先按一次）")
-    if st.button("✅ 立即測試常用來源連線", use_container_width=True):
-        tests = [
-            ("TWSE_HOME", "https://www.twse.com.tw/"),
-            ("TWSE_STOCK_DAY_JSON", "https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=20250101&stockNo=2330"),
-            ("TPEX_HOME", "https://www.tpex.org.tw/"),
-            ("TPEX_ST43", "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&d=114/01/02&stkno=6488"),
-        ]
-        out = []
-        for name, url in tests:
-            r, err = http_get(url, params=None)
-            if r is None:
-                out.append({"name": name, "ok": False, "status": None, "url": url, "snippet": (err or "")[:120]})
-            else:
-                out.append({"name": name, "ok": (r.status_code == 200), "status": r.status_code, "url": r.url,
-                            "snippet": (r.text or "")[:120].replace("\n", " ")})
-        st.dataframe(pd.DataFrame(out), use_container_width=True, hide_index=True)
+def _parse_twse_stock_day_json(j: dict) -> pd.DataFrame:
+    # TWSE STOCK_DAY JSON 格式：{"stat":"OK","date":"20250201","title":...,"fields":[...],"data":[...]}
+    if not isinstance(j, dict):
+        return pd.DataFrame()
+    if j.get("stat") != "OK":
+        return pd.DataFrame()
+    fields = j.get("fields", [])
+    data = j.get("data", [])
+    if not fields or not data:
+        return pd.DataFrame()
 
+    df = pd.DataFrame(data, columns=fields)
 
-# -----------------------------
-# 單股渲染
-# -----------------------------
-def render_single(stock_id: str, period_key: str, show_debug: bool, max_buy_dist: float):
-    stock_id = normalize_stock_id(stock_id)
-    days = PERIOD_TO_DAYS.get(period_key, 180)
+    # 常見欄位（中文）
+    # 日期, 成交股數, 成交金額, 開盤價, 最高價, 最低價, 收盤價, 漲跌價差, 成交筆數
+    col_date = None
+    for c in df.columns:
+        if "日期" in c:
+            col_date = c
+            break
+    if col_date is None:
+        return pd.DataFrame()
 
-    df, src, logs = fetch_data_all(stock_id, days)
+    def parse_date_tw(x: str) -> Optional[dt.datetime]:
+        # 例如 "114/02/03"
+        s = str(x).strip()
+        m = re.match(r"(\d{2,3})/(\d{1,2})/(\d{1,2})", s)
+        if not m:
+            return None
+        yy = int(m.group(1)) + 1911
+        mm = int(m.group(2))
+        dd = int(m.group(3))
+        return dt.datetime(yy, mm, dd)
 
-    if df is None or df.empty:
-        st.error("❌ 無法取得資料（所有備援來源都失敗）。")
-        if show_debug:
-            render_diagnostics(logs)
-        return
+    df["Date"] = df[col_date].apply(parse_date_tw)
+    df = df.dropna(subset=["Date"]).copy()
+    df = df.sort_values("Date")
 
-    d = compute_indicators(df)
-    last_date = d.index[-1].date()
-    price = float(d["close"].iloc[-1])
+    # 抽 OHLCV
+    def pick(name_keywords: List[str]) -> Optional[str]:
+        for k in name_keywords:
+            for c in df.columns:
+                if k in c:
+                    return c
+        return None
 
-    score = resonance_score(d)
-    zones = estimate_zones(d, max_buy_dist=max_buy_dist)
+    c_open = pick(["開盤"])
+    c_high = pick(["最高"])
+    c_low = pick(["最低"])
+    c_close = pick(["收盤"])
+    c_vol = pick(["成交股數", "成交量"])
 
-    # Header metrics
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("目前價格", f"{price:.2f}")
-    col2.metric("AI 共振分數", f"{score}/100")
-    col3.metric("資料來源", f"{src}")
-    col4.metric("最後日期 / 筆數", f"{last_date} / {len(d)}")
+    if not all([c_open, c_high, c_low, c_close, c_vol]):
+        return pd.DataFrame()
 
-    st.markdown("### 📌 當下是否為買點/賣點？（可操作判斷）")
-    if zones["action"] == "BUY":
-        st.success("✅ 當下位於『近端買點區』（可操作）")
-    elif zones["action"] == "SELL":
-        st.warning("⚠️ 當下位於『近端賣點區』")
-    else:
-        st.info("⏳ 觀望：條件尚未明確")
+    out = pd.DataFrame({
+        "Open": df[c_open].map(_to_float),
+        "High": df[c_high].map(_to_float),
+        "Low": df[c_low].map(_to_float),
+        "Close": df[c_close].map(_to_float),
+        "Volume": df[c_vol].map(_to_float),
+    }, index=pd.to_datetime(df["Date"]))
 
-    st.caption(f"原因：{zones['reason']}")
+    out = out[~out.index.duplicated(keep="last")]
+    out = out.sort_index()
+    return out
 
-    st.markdown("### 🗺️ 未來預估買賣點（區間 + 距離%）")
+@st.cache_data(show_spinner=False, ttl=60 * 10)
+def fetch_twse_json(stock_id: str, months_back: int) -> Tuple[pd.DataFrame, List[FetchAttempt]]:
+    attempts: List[FetchAttempt] = []
+    all_df = []
 
-    if zones["near_buy"] is not None:
-        nb0, nb1 = zones["near_buy"]
-        st.success(f"✅ 可操作買點（近端回檔）：{nb0:.2f} ~ {nb1:.2f}（距離現價：約 {abs(zones['near_buy_dist'])*100:.1f}%）")
-    else:
-        st.warning("⚠️ 近端買點：距離過遠或不可操作（已自動隱藏）")
+    for d0 in _twse_month_list(months_back):
+        date_str = f"{d0.year}{d0.month:02d}01"
+        url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date_str}&stockNo={stock_id}"
+        status, j, err, snip = _req_json(url)
+        if err:
+            attempts.append(FetchAttempt("TWSE_JSON", "ERROR", url, status, err[:120]))
+            continue
+        if j is None:
+            attempts.append(FetchAttempt("TWSE_JSON", "BAD_JSON", url, status, snip))
+            continue
+        if j.get("stat") != "OK":
+            attempts.append(FetchAttempt("TWSE_JSON", f"STAT_{j.get('stat')}", url, status, snip))
+            continue
+        dfm = _parse_twse_stock_day_json(j)
+        if dfm.empty:
+            attempts.append(FetchAttempt("TWSE_JSON", "EMPTY_PARSED", url, status, snip))
+            continue
+        attempts.append(FetchAttempt("TWSE_JSON", "OK", url, status, ""))
+        all_df.append(dfm)
 
-    db0, db1 = zones["deep_buy"]
-    st.info(f"🕳️ 深回檔買點（等待型）：{db0:.2f} ~ {db1:.2f}（距離現價：約 {abs(zones['deep_buy_dist'])*100:.1f}%）")
+        # 小睡避免太密集
+        time.sleep(0.05)
 
-    ns0, ns1 = zones["near_sell"]
-    st.warning(f"🎯 近端賣點區（壓力/獲利）：{ns0:.2f} ~ {ns1:.2f}（距離現價：約 {abs(zones['near_sell_dist'])*100:.1f}%）")
+    if all_df:
+        df = pd.concat(all_df).sort_index()
+        df = df[~df.index.duplicated(keep="last")]
+        return df, attempts
+    return pd.DataFrame(), attempts
 
-    st.markdown("### 📉 布林通道分析圖（K線 + BB + EMA20 + Volume）")
-    fig = plot_candles_with_bb(d, title=f"{stock_id}｜{src}")
-    st.pyplot(fig, clear_figure=True)
+@st.cache_data(show_spinner=False, ttl=60 * 10)
+def fetch_yfinance(stock_id: str, months_back: int) -> Tuple[pd.DataFrame, List[FetchAttempt], str]:
+    """
+    回傳 df, attempts, source_tag
+    source_tag: YF.TW / YF.TWO
+    """
+    attempts: List[FetchAttempt] = []
+    # yfinance 在 Cloud 可能會被擋，但仍保留備援
+    try:
+        import yfinance as yf
+    except Exception as e:
+        attempts.append(FetchAttempt("YF", "NO_MODULE", "import yfinance", None, str(e)[:120]))
+        return pd.DataFrame(), attempts, "YF"
 
-    with st.expander("📄 最近 20 筆資料（含指標）", expanded=False):
-        show_cols = ["open", "high", "low", "close", "volume", "ema20", "bb_u", "bb_m", "bb_l", "k", "d", "macd_hist", "bias20", "vol_ratio"]
-        st.dataframe(d[show_cols].tail(20), use_container_width=True)
+    period_days = max(90, int(months_back * 30.5) + 10)
+    end = dt.datetime.utcnow()
+    start = end - dt.timedelta(days=period_days)
 
-    if show_debug:
-        render_diagnostics(logs)
-
-
-# -----------------------------
-# Top10 掃描
-# -----------------------------
-def scan_top10(stock_pool: List[str], period_key: str, max_buy_dist: float, show_debug: bool) -> Tuple[pd.DataFrame, Dict[str, List[FetchLog]]]:
-    days = PERIOD_TO_DAYS.get(period_key, 180)
-    rows = []
-    debug_map: Dict[str, List[FetchLog]] = {}
-
-    for sid in stock_pool:
-        sid = normalize_stock_id(sid)
-        df, src, logs = fetch_data_all(sid, days)
-        debug_map[sid] = logs
-
-        if df is None or df.empty:
+    # 先 .TW 再 .TWO
+    for suf, tag in [(".TW", "YF.TW"), (".TWO", "YF.TWO")]:
+        ticker = f"{stock_id}{suf}"
+        try:
+            df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False, threads=False)
+            if df is None or df.empty:
+                attempts.append(FetchAttempt("YF", "EMPTY", ticker, 200, ""))
+                continue
+            # yfinance 欄位可能是多層 or 小寫
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = [c[0] for c in df.columns]
+            df = df.rename(columns={
+                "Open": "Open", "High": "High", "Low": "Low", "Close": "Close", "Adj Close": "Adj Close", "Volume": "Volume"
+            })
+            df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+            df.index = pd.to_datetime(df.index)
+            df = df.dropna(subset=["Close"])
+            attempts.append(FetchAttempt("YF", "OK", ticker, 200, ""))
+            return df, attempts, tag
+        except Exception as e:
+            attempts.append(FetchAttempt("YF", "ERROR", ticker, None, str(e)[:120]))
             continue
 
-        d = compute_indicators(df)
-        if len(d) < 60:
+    return pd.DataFrame(), attempts, "YF"
+
+def parse_user_csv(uploaded_file) -> Tuple[pd.DataFrame, List[FetchAttempt]]:
+    attempts: List[FetchAttempt] = []
+    if uploaded_file is None:
+        return pd.DataFrame(), attempts
+    try:
+        raw = uploaded_file.getvalue()
+        df = pd.read_csv(io.BytesIO(raw))
+        # 允許常見欄位：Date/Open/High/Low/Close/Volume（大小寫不拘）
+        cols = {c.lower(): c for c in df.columns}
+        need = ["date", "open", "high", "low", "close", "volume"]
+        if not all(k in cols for k in need):
+            attempts.append(FetchAttempt("CSV", "BAD_COLUMNS", "uploaded", None, f"columns={list(df.columns)[:12]}"))
+            return pd.DataFrame(), attempts
+
+        out = pd.DataFrame({
+            "Open": df[cols["open"]].map(_to_float),
+            "High": df[cols["high"]].map(_to_float),
+            "Low": df[cols["low"]].map(_to_float),
+            "Close": df[cols["close"]].map(_to_float),
+            "Volume": df[cols["volume"]].map(_to_float),
+        }, index=pd.to_datetime(df[cols["date"]], errors="coerce"))
+
+        out = out.dropna(subset=["Close"])
+        out = out.sort_index()
+        attempts.append(FetchAttempt("CSV", "OK", "uploaded", 200, ""))
+        return out, attempts
+    except Exception as e:
+        attempts.append(FetchAttempt("CSV", "ERROR", "uploaded", None, str(e)[:140]))
+        return pd.DataFrame(), attempts
+
+def load_price_data(
+    stock_id: str,
+    months_back: int,
+    uploaded_csv=None,
+    enable_debug: bool = False
+) -> Tuple[pd.DataFrame, str, List[FetchAttempt]]:
+    """
+    回傳：df, source_tag, attempts
+    """
+    stock_id = _clean_stock_id(stock_id)
+    attempts: List[FetchAttempt] = []
+
+    # 1) TWSE JSON（最穩）
+    df, att = fetch_twse_json(stock_id, months_back=months_back)
+    attempts += att
+    if not df.empty:
+        return df, "TWSE_JSON", attempts
+
+    # 2) Yahoo（備援）
+    df2, att2, tag = fetch_yfinance(stock_id, months_back=months_back)
+    attempts += att2
+    if not df2.empty:
+        return df2, tag, attempts
+
+    # 3) 使用者上傳 CSV（最後備援）
+    df3, att3 = parse_user_csv(uploaded_csv)
+    attempts += att3
+    if not df3.empty:
+        return df3, "CSV", attempts
+
+    return pd.DataFrame(), "NONE", attempts
+
+
+# -----------------------------
+# Top10 掃描（去重 + 顯示操作判斷 + 距離%）
+# -----------------------------
+def scan_top10(
+    stock_pool: List[str],
+    months_back: int,
+    max_buy_distance: float,
+    uploaded_csv=None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    回傳：
+    - result_df: Top10 table
+    - diag_df: diagnostics attempts
+    """
+    rows = []
+    diag_rows = []
+
+    # 去重（避免 Top10 出現同一檔重複）
+    pool = _unique_keep_order([_clean_stock_id(x) for x in stock_pool if _clean_stock_id(x)])
+    for sid in pool:
+        if not _is_taiwan_stock_id(sid):
             continue
 
-        price = float(d["close"].iloc[-1])
-        score = resonance_score(d)
-        zones = estimate_zones(d, max_buy_dist=max_buy_dist)
+        df, src, attempts = load_price_data(sid, months_back, uploaded_csv=uploaded_csv)
+        for a in attempts:
+            diag_rows.append({
+                "stock": sid,
+                "source": a.source,
+                "result": a.result,
+                "url": a.url,
+                "status": a.status,
+                "snippet": a.snippet
+            })
 
-        def pct_to_str(p: float) -> str:
-            return f"{p*100:.1f}%"
+        if df.empty:
+            continue
 
-        near_buy_pct = ""
-        if zones["near_buy"] is not None:
-            near_buy_pct = pct_to_str(abs(zones["near_buy_dist"]))
-        deep_buy_pct = pct_to_str(abs(zones["deep_buy_dist"]))
-        near_sell_pct = pct_to_str(abs(zones["near_sell_dist"]))
+        dfi = add_indicators(df)
+        z = compute_zones(dfi, max_buy_distance=max_buy_distance)
+
+        last_date = dfi.index.max().strftime("%Y-%m-%d") if len(dfi) else ""
+        curr = float(dfi["Close"].iloc[-1])
 
         rows.append({
             "股票": sid,
             "來源": src,
-            "目前價": round(price, 2),
-            "操作判斷": zones["action"],
-            "AI分數": score,
-            "近端買點距離": near_buy_pct if near_buy_pct else "—",
-            "深回檔距離": deep_buy_pct,
-            "近端賣點距離": near_sell_pct,
-            "最後日期": str(d.index[-1].date()),
+            "目前價": round(curr, 2),
+            "操作判斷": z.action,
+            "AI分數": z.score,
+            "近端買點距離": (None if z.near_buy_dist is None else f"{z.near_buy_dist*100:.1f}%"),
+            "深回檔距離": (None if z.deep_buy_dist is None else f"{z.deep_buy_dist*100:.1f}%"),
+            "近端賣點距離": (None if z.near_sell_dist is None else f"{z.near_sell_dist*100:.1f}%"),
+            "最後日期": last_date,
         })
 
-    out = pd.DataFrame(rows)
-    if out.empty:
-        return out, debug_map
+    if not rows:
+        return pd.DataFrame(), pd.DataFrame(diag_rows)
 
-    # 先依 AI 分數，再把 SELL/BUY/觀望做次排序
-    action_rank = {"BUY": 0, "SELL": 1, "WATCH": 2}
-    out["_ar"] = out["操作判斷"].map(lambda x: action_rank.get(x, 9))
-    out = out.sort_values(["AI分數", "_ar"], ascending=[False, True]).drop(columns=["_ar"]).head(10)
-    return out, debug_map
+    result_df = pd.DataFrame(rows)
 
+    # 分數排序 + 同分則優先距離較近的賣點（可操作）
+    # 若欄位為 None/字串，先轉數值
+    def pct_to_float(x):
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return np.nan
+        s = str(x).replace("%", "").strip()
+        return _to_float(s) / 100.0
 
-def render_top10(period_key: str, max_buy_dist: float, show_debug: bool):
-    st.markdown("Top10 掃描器：**先用小池測試**（避免全市場在 Cloud 超時）。")
+    result_df["_score"] = result_df["AI分數"].map(_to_float)
+    result_df["_sell_dist"] = result_df["近端賣點距離"].map(pct_to_float)
+    result_df = result_df.sort_values(by=["_score", "_sell_dist"], ascending=[False, True])
 
-    pool_text = st.text_area(
-        "stock_pool（逗號或換行分隔）",
-        value="\n".join(DEFAULT_POOL),
-        height=140,
-    )
-    pool = []
-    for part in pool_text.replace(",", "\n").split("\n"):
-        p = normalize_stock_id(part)
-        if p:
-            pool.append(p)
+    # 只取前 10
+    result_df = result_df.drop(columns=["_score", "_sell_dist"]).head(10).reset_index(drop=True)
 
-    if st.button("🔥 RUN Top10 掃描", use_container_width=True):
-        with st.spinner("掃描中…（逐檔取資料＋算指標）"):
-            result, debug_map = scan_top10(pool, period_key, max_buy_dist, show_debug)
-
-        if result.empty:
-            st.warning("目前掃描結果為空（可能資料下載失敗/來源限制）。稍後再試或換 stock_pool。")
-            if show_debug:
-                # 顯示前幾檔診斷
-                for k in pool[:5]:
-                    st.write(f"— {k}")
-                    render_diagnostics(debug_map.get(k, []))
-            return
-
-        st.subheader("🔥 AI 強勢股 Top 10（含當下操作判斷 + 距離%）")
-        st.dataframe(result, use_container_width=True, hide_index=True)
-
-        st.markdown("### 🔎 點選一檔直接展開完整分析")
-        pick = st.selectbox("選擇股票", options=result["股票"].tolist())
-        st.divider()
-        render_single(pick, period_key=period_key, show_debug=show_debug, max_buy_dist=max_buy_dist)
+    return result_df, pd.DataFrame(diag_rows)
 
 
 # -----------------------------
-# Streamlit 主程式
+# UI
 # -----------------------------
 def main():
     st.set_page_config(page_title="AI 台股量化平台", layout="wide")
+
     st.title(APP_TITLE)
+    st.caption("只做資訊顯示，不自動下單。Top10 先用小池測試（避免全市場在 Cloud 超時）。")
 
     with st.sidebar:
-        st.markdown("## 選擇模式")
-        mode = st.radio("選擇模式", ["單一股票分析", "Top 10 掃描器"], index=0)
+        st.subheader("選擇模式")
+        mode = st.radio("選擇模式", ["單一股票分析", "Top 10 掃描器"], index=0, label_visibility="collapsed")
 
-        st.markdown("## 資料期間")
-        period_key = st.selectbox("資料期間", options=list(PERIOD_TO_DAYS.keys()), index=1)
+        st.subheader("資料期間")
+        period = st.selectbox("資料期間", list(PERIOD_MAP.keys()), index=1)
+        months_back = PERIOD_MAP[period]
 
-        show_debug = st.checkbox("顯示下載除錯資訊（Debug）", value=False)
+        enable_debug = st.checkbox("顯示下載除錯資訊（Debug）", value=False)
 
-        st.markdown("## 可操作買點最大距離（避免買點離現實太遠）")
-        max_buy_dist = st.slider("max_buy_distance", min_value=0.03, max_value=0.30, value=0.12, step=0.01)
+        max_buy_distance = st.slider(
+            "可操作買點最大距離（避免買點離現實太遠）\nmax_buy_distance",
+            min_value=0.05, max_value=0.30, value=0.12, step=0.01
+        )
 
-        with st.expander("🧪 網路測試（建議先按一次）", expanded=False):
-            network_test_panel()
+        st.markdown("---")
+        st.markdown("🧪 **網路測試（建議先按一次）**")
+        do_net_test = st.button("🧪 網路測試（建議先按一次）")
 
-    if mode == "單一股票分析":
-        stock = st.text_input("請輸入股票代號", value="2330")
-        render_single(stock, period_key=period_key, show_debug=show_debug, max_buy_dist=max_buy_dist)
+        st.markdown("---")
+        uploaded_csv = st.file_uploader("（最後備援）上傳 CSV（Date,Open,High,Low,Close,Volume）", type=["csv"])
+
+    if do_net_test:
+        # 簡單測試 TWSE JSON 連線
+        test_url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=20250101&stockNo=2330"
+        status, j, err, snip = _req_json(test_url)
+        if err:
+            st.error(f"TWSE JSON 測試失敗：{err}")
+        else:
+            ok = (j is not None and isinstance(j, dict) and j.get("stat") == "OK")
+            if ok:
+                st.success("TWSE JSON 連線正常 ✅（Cloud 通常最穩）")
+            else:
+                st.warning(f"TWSE JSON 回應非 OK（可能暫時擁塞/封鎖） status={status} snip={snip}")
+
+    if mode == "Top 10 掃描器":
+        st.subheader("Top10 掃描器：先用小池測試（避免全市場在 Cloud 超時）。")
+
+        stock_pool_text = st.text_area("stock_pool（逗號或換行分隔）", value=DEFAULT_POOL, height=140)
+        stock_pool = re.split(r"[,\n]+", stock_pool_text.strip())
+        stock_pool = [x.strip() for x in stock_pool if x.strip()]
+
+        run = st.button("🔥 RUN Top10 掃描", type="primary")
+
+        if run:
+            with st.spinner("掃描中..."):
+                result_df, diag_df = scan_top10(
+                    stock_pool=stock_pool,
+                    months_back=months_back,
+                    max_buy_distance=max_buy_distance,
+                    uploaded_csv=uploaded_csv
+                )
+
+            st.markdown("### 🔥 AI 強勢股 Top 10（含當下操作判斷 + 距離%）")
+            if result_df.empty:
+                st.warning("目前掃描結果為空（代表資料下載失敗）。請稍後再試或換 stock_pool。")
+            else:
+                st.dataframe(result_df, use_container_width=True)
+
+                st.markdown("### 🔎 點選一檔直接展開完整分析")
+                pick = st.selectbox("選擇股票", result_df["股票"].tolist(), index=0)
+                render_single_stock(
+                    pick, months_back=months_back, max_buy_distance=max_buy_distance,
+                    uploaded_csv=uploaded_csv, enable_debug=enable_debug
+                )
+
+            if enable_debug and (diag_df is not None) and (not diag_df.empty):
+                st.markdown("### 🧩 逐路診斷（哪一路失敗、為什麼）")
+                st.dataframe(diag_df, use_container_width=True)
+
+        return
+
+    # 單一股票
+    st.subheader("單一股票分析")
+    stock_id = st.text_input("請輸入股票代號", value="2330")
+
+    render_single_stock(
+        stock_id, months_back=months_back, max_buy_distance=max_buy_distance,
+        uploaded_csv=uploaded_csv, enable_debug=enable_debug
+    )
+
+
+def render_single_stock(
+    stock_id: str,
+    months_back: int,
+    max_buy_distance: float,
+    uploaded_csv=None,
+    enable_debug: bool = False
+):
+    sid = _clean_stock_id(stock_id)
+    if not _is_taiwan_stock_id(sid):
+        st.error("請輸入台股代號（例如：2330 / 2317 / 00878）")
+        return
+
+    with st.spinner("下載資料中..."):
+        df, src, attempts = load_price_data(sid, months_back, uploaded_csv=uploaded_csv, enable_debug=enable_debug)
+
+    if df.empty:
+        st.error("❌ 無法取得資料（所有備援來源都失敗）。")
+        if enable_debug and attempts:
+            st.markdown("### 🧩 逐路診斷（哪一路失敗、為什麼）")
+            diag_df = pd.DataFrame([{
+                "source": a.source, "result": a.result, "url": a.url, "status": a.status, "snippet": a.snippet
+            } for a in attempts])
+            st.dataframe(diag_df, use_container_width=True)
+        return
+
+    dfi = add_indicators(df)
+    z = compute_zones(dfi, max_buy_distance=max_buy_distance)
+
+    last = dfi.iloc[-1]
+    curr = float(last["Close"])
+    last_date = dfi.index.max().strftime("%Y-%m-%d")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("目前價格", f"{curr:.2f}")
+    c2.metric("AI 共振分數", f"{z.score}/100")
+    c3.metric("資料來源", src)
+    c4.metric("最後日期 / 筆數", f"{last_date} / {len(dfi)}")
+
+    st.markdown("## 📌 當下是否為買點/賣點？（可操作判斷）")
+    if z.action == "BUY":
+        st.success(f"✅ BUY：{z.reason}")
+    elif z.action == "SELL":
+        st.warning(f"⚠️ SELL：{z.reason}")
     else:
-        render_top10(period_key=period_key, max_buy_dist=max_buy_dist, show_debug=show_debug)
+        st.info(f"⏳ WATCH：{z.reason}")
+
+    # 若近端買點被隱藏，明確寫出原因（對應你 PDF 第 3 頁的敘述邏輯）:contentReference[oaicite:1]{index=1}
+    st.markdown("## 🗺️ 未來預估買賣點（區間 + 距離%）")
+
+    if z.near_buy is None:
+        st.warning("⚠️ 近端買點：距離過遠或不可操作（已自動隱藏）")
+    else:
+        lo, hi = z.near_buy
+        dist = z.near_buy_dist or np.nan
+        st.success(f"🟢 近端買點（可操作）：{lo:.2f} ~ {hi:.2f}（距離現價：約 {dist*100:.1f}%）")
+
+    if z.deep_buy:
+        lo, hi = z.deep_buy
+        dist = z.deep_buy_dist or np.nan
+        st.info(f"🟦 深回檔買點（等待型）：{lo:.2f} ~ {hi:.2f}（距離現價：約 {dist*100:.1f}%）")
+
+    if z.near_sell:
+        lo, hi = z.near_sell
+        dist = z.near_sell_dist or np.nan
+        st.warning(f"🎯 近端賣點區（壓力/獲利）：{lo:.2f} ~ {hi:.2f}（距離現價：約 {dist*100:.1f}%）")
+
+    st.markdown("## 📉 布林通道分析圖（K線 + BB + EMA20 + Volume）")
+    fig = plot_bollinger_candles(dfi, title=f"{sid} | {src}")
+    st.pyplot(fig, clear_figure=True)
+
+    with st.expander("📄 最近 20 筆資料（含指標）", expanded=False):
+        tail_cols = ["Open", "High", "Low", "Close", "Volume", "EMA20", "EMA60", "BB_upper", "BB_mid", "BB_lower", "MACD", "MACD_signal", "MACD_hist", "K", "D", "RSI14", "Bias20"]
+        show = dfi[tail_cols].tail(20).copy()
+        st.dataframe(show, use_container_width=True)
+
+    if enable_debug and attempts:
+        st.markdown("## 🧩 逐路診斷（哪一路成功/失敗、為什麼）")
+        diag_df = pd.DataFrame([{
+            "source": a.source, "result": a.result, "url": a.url, "status": a.status, "snippet": a.snippet
+        } for a in attempts])
+        st.dataframe(diag_df, use_container_width=True)
 
 
 if __name__ == "__main__":
