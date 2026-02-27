@@ -1,20 +1,12 @@
 # app.py
-# AI 台股量化專業平台（V23：趨勢突破型 / 無 Plotly / 全功能保留）
+# AI 台股量化專業平台（V23.1：趨勢突破型 / 無 Plotly / 全功能保留 / Cloud 抗擋版）
 # ✅ 單一股票分析 + Top10 掃描器
 # ✅ 逐路診斷（每條資料源的 HTTP / bytes / preview）
 # ✅ 指標：MA/EMA、MACD、KD(Stoch)、RSI、ATR、布林通道、量能
-# ✅ 趨勢突破策略：突破觸發價 / 回測買點 / 失效止損 / 目標價
+# ✅ 趨勢突破策略：突破追價進場（你指定）+ 回測二次進場 + 失效止損 + 目標價
 # ✅ 專業距離：溢價/折價%、ATR 標準化距離、Entry Efficiency
 # ✅ 倉位建議（500–1000萬）：依 ATR 止損距離 + 風險% + 最大持倉% 自動計算
-#
-# requirements.txt（建議）
-# streamlit
-# pandas
-# numpy
-# requests
-# matplotlib
-# yfinance
-# pandas_datareader
+# ✅ 最終備援：允許上傳 CSV（官方全掛也能跑）
 
 from __future__ import annotations
 
@@ -45,8 +37,8 @@ except Exception:
 # -----------------------------
 # Page
 # -----------------------------
-st.set_page_config(page_title="AI 台股量化專業平台（V23 Breakout）", layout="wide")
-st.markdown("# 🧠 AI 台股量化專業平台（V23 / 趨勢突破型 / 無 Plotly / 全功能保留）")
+st.set_page_config(page_title="AI 台股量化專業平台（V23.1 Breakout）", layout="wide")
+st.markdown("# 🧠 AI 台股量化專業平台（V23.1 / 趨勢突破型 / 無 Plotly / 全功能保留）")
 st.caption("多源備援 + 逐路診斷 + 指標共振 + 布林通道圖 + 突破交易計畫（不自動下單）")
 
 
@@ -73,34 +65,43 @@ def get_session() -> requests.Session:
     return s
 
 
-def _requests_get(url: str, timeout: int = 12) -> Tuple[Optional[requests.Response], Optional[str], str]:
-    """
-    Cloud 常被擋：加 headers + session + retry + backoff
-    回傳 (response, error, preview_text)
-    """
-    headers = {
+def _headers_for(url: str) -> Dict[str, str]:
+    # 依網域切換 Referer（Cloud 被擋時很重要）
+    if "tpex.org.tw" in url:
+        referer = "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43.php?l=zh-tw"
+    else:
+        referer = "https://www.twse.com.tw/zh/trading/historical/stock-day.html"
+
+    return {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/122.0 Safari/537.36",
         "Accept": "*/*",
         "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
         "Connection": "keep-alive",
-        "Referer": "https://www.twse.com.tw/zh/trading/historical/stock-day.html",
+        "Referer": referer,
         "X-Requested-With": "XMLHttpRequest",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
     }
 
+
+def _requests_get(url: str, timeout: int = 14) -> Tuple[Optional[requests.Response], Optional[str], str]:
+    """
+    Cloud 常被擋：headers + session + retry + backoff
+    回傳 (response, error, preview_text)
+    """
     sess = get_session()
     last_err = None
     preview = ""
     for i in range(3):
         try:
-            r = sess.get(url, headers=headers, timeout=timeout)
+            r = sess.get(url, headers=_headers_for(url), timeout=timeout)
             txt = r.text or ""
-            preview = txt[:160].replace("\n", " ")
+            preview = txt[:180].replace("\n", " ")
             return r, None, preview
         except Exception as e:
             last_err = str(e)
-            time.sleep(0.5 * (i + 1))
-
+            time.sleep(0.7 * (i + 1))
     return None, last_err, preview
 
 
@@ -303,7 +304,8 @@ def fetch_yfinance(code: str, period_days: int) -> Tuple[Optional[pd.DataFrame],
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_twse_json(code: str, months_back: int) -> Tuple[Optional[pd.DataFrame], List[FetchAttempt]]:
     """
-    TWSE JSON: https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?response=json&date=YYYYMMDD&stockNo=2330
+    TWSE JSON：
+    https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?response=json&date=YYYYMMDD&stockNo=2330
     """
     attempts: List[FetchAttempt] = []
     frames = []
@@ -324,11 +326,11 @@ def fetch_twse_json(code: str, months_back: int) -> Tuple[Optional[pd.DataFrame]
             attempts.append(FetchAttempt("TWSE_JSON", url, "HTTP_ERR", http=r.status_code, bytes=len(text), preview=preview))
             continue
 
-        if len(text.strip()) < 80:
-            attempts.append(FetchAttempt("TWSE_JSON", url, "TOO_SHORT", http=200, bytes=len(text), preview=preview))
+        # WAF 常回 HTML
+        if "<html" in text.lower():
+            attempts.append(FetchAttempt("TWSE_JSON", url, "WAF_HTML", http=200, bytes=len(text), preview=preview))
             continue
 
-        # if WAF returns HTML, json() will fail; we capture preview
         try:
             j = r.json()
             data = j.get("data", [])
@@ -375,12 +377,11 @@ def fetch_twse_json(code: str, months_back: int) -> Tuple[Optional[pd.DataFrame]
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def fetch_tpex_html(code: str, months_back: int) -> Tuple[Optional[pd.DataFrame], List[FetchAttempt]]:
+def fetch_tpex_json(code: str, months_back: int) -> Tuple[Optional[pd.DataFrame], List[FetchAttempt]]:
     """
-    TPEX（上櫃）常見頁面會回 HTML table：
-    https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&d=114/02&stkno=6274
-
-    我們逐月拉，使用 pandas.read_html 解析表格（比 JSON 更耐擋）
+    ✅ 重點修正：TPEX 改用 JSON（不靠 read_html）
+    TPEX JSON：
+    https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&o=json&d=114/02&stkno=6274
     """
     attempts: List[FetchAttempt] = []
     frames = []
@@ -391,82 +392,56 @@ def fetch_tpex_html(code: str, months_back: int) -> Tuple[Optional[pd.DataFrame]
         dt = (today - pd.DateOffset(months=m)).to_pydatetime()
         roc_y = dt.year - 1911
         d_param = f"{roc_y}/{dt.month:02d}"
-        url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&d={d_param}&stkno={code}"
+        url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&o=json&d={d_param}&stkno={code}"
 
         r, err, preview = _requests_get(url)
         if r is None:
-            attempts.append(FetchAttempt("TPEX_HTML", url, "EXC", note=err or "request failed", preview=preview))
+            attempts.append(FetchAttempt("TPEX_JSON", url, "EXC", note=err or "request failed", preview=preview))
             continue
 
         text = r.text or ""
         if r.status_code != 200:
-            attempts.append(FetchAttempt("TPEX_HTML", url, "HTTP_ERR", http=r.status_code, bytes=len(text), preview=preview))
+            attempts.append(FetchAttempt("TPEX_JSON", url, "HTTP_ERR", http=r.status_code, bytes=len(text), preview=preview))
             continue
 
-        if len(text.strip()) < 200:
-            attempts.append(FetchAttempt("TPEX_HTML", url, "TOO_SHORT", http=200, bytes=len(text), preview=preview))
+        if "<html" in text.lower():
+            attempts.append(FetchAttempt("TPEX_JSON", url, "WAF_HTML", http=200, bytes=len(text), preview=preview))
             continue
 
         try:
-            tables = pd.read_html(text)
-            if not tables:
-                attempts.append(FetchAttempt("TPEX_HTML", url, "NO_TABLE", http=200, bytes=len(text), preview=preview))
+            j = r.json()
+
+            # 常見：aaData 或 dataArray 或 table
+            data = j.get("aaData") or j.get("data") or j.get("dataArray") or []
+            if not data:
+                attempts.append(FetchAttempt("TPEX_JSON", url, "NO_DATA", http=200, bytes=len(text), preview=preview))
                 continue
 
-            # usually first table contains daily data
-            t = tables[0].copy()
-
-            # Try to detect columns
-            # Typical columns might include: 日期, 成交股數, 成交金額, 開盤, 最高, 最低, 收盤, 漲跌, 成交筆數...
-            cols = [str(c).strip() for c in t.columns]
-            # Find date column
-            date_col = None
-            for c in cols:
-                if "日期" in c:
-                    date_col = c
-                    break
-            if date_col is None:
-                attempts.append(FetchAttempt("TPEX_HTML", url, "SCHEMA_MISS", http=200, bytes=len(text), preview=preview))
-                continue
-
-            def parse_roc_date(s: str) -> datetime:
-                # may be "114/02/27"
-                p = str(s).strip().split("/")
+            # TPEX st43 常見欄位順序（可能版本差異）
+            # 0 日期 1 成交股數 2 成交金額 3 開盤 4 最高 5 最低 6 收盤 7 漲跌 8 成交筆數
+            rows = []
+            for row in data:
+                if not row or len(row) < 7:
+                    continue
+                date_s = str(row[0]).strip()  # 114/02/27
+                p = date_s.split("/")
                 y = int(p[0]) + 1911
-                return datetime(y, int(p[1]), int(p[2]))
+                d = datetime(y, int(p[1]), int(p[2]))
+                rows.append({
+                    "Date": d,
+                    "Open": _safe_float(row[3]),
+                    "High": _safe_float(row[4]),
+                    "Low": _safe_float(row[5]),
+                    "Close": _safe_float(row[6]),
+                    "Volume": _safe_float(row[1]),
+                })
 
-            # close/open/high/low columns
-            def find_col(keys: List[str]) -> Optional[str]:
-                for k in keys:
-                    for c in cols:
-                        if k in c:
-                            return c
-                return None
-
-            c_open = find_col(["開盤"])
-            c_high = find_col(["最高"])
-            c_low = find_col(["最低"])
-            c_close = find_col(["收盤"])
-            c_vol = find_col(["成交股數", "成交量"])
-
-            if c_close is None:
-                attempts.append(FetchAttempt("TPEX_HTML", url, "SCHEMA_MISS", http=200, bytes=len(text), preview=preview))
-                continue
-
-            out = pd.DataFrame({
-                "Date": t[date_col].map(parse_roc_date),
-                "Open": t[c_open].map(_safe_float) if c_open else None,
-                "High": t[c_high].map(_safe_float) if c_high else None,
-                "Low": t[c_low].map(_safe_float) if c_low else None,
-                "Close": t[c_close].map(_safe_float),
-                "Volume": t[c_vol].map(_safe_float) if c_vol else None,
-            }).dropna(subset=["Close"])
-
+            out = pd.DataFrame(rows).dropna(subset=["Close"])
             out = _normalize_ohlcv(out)
             frames.append(out)
-            attempts.append(FetchAttempt("TPEX_HTML", url, "OK", http=200, bytes=len(text), note=f"rows={len(out)}"))
+            attempts.append(FetchAttempt("TPEX_JSON", url, "OK", http=200, bytes=len(text), note=f"rows={len(out)}"))
         except Exception as e:
-            attempts.append(FetchAttempt("TPEX_HTML", url, "PARSE_ERR", http=200, bytes=len(text), note=str(e), preview=preview))
+            attempts.append(FetchAttempt("TPEX_JSON", url, "PARSE_ERR", http=200, bytes=len(text), note=str(e), preview=preview))
 
     if not frames:
         return None, attempts
@@ -502,7 +477,47 @@ def fetch_stooq(code: str, period_days: int) -> Tuple[Optional[pd.DataFrame], Fe
     return None, FetchAttempt("STOOQ", "stooq", "FAIL", note=last_note or "download failed")
 
 
-def fetch_ohlcv_multi(code: str, months_back: int) -> Tuple[Optional[pd.DataFrame], str, List[FetchAttempt]]:
+def _load_csv_fallback(uploaded_file) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
+    """
+    最終備援：你自己上傳 export.csv
+    允許欄位名：Date/日期 + Open High Low Close Volume（或 close/volume）
+    """
+    try:
+        df = pd.read_csv(uploaded_file)
+        # try rename common chinese headers
+        rename_map = {}
+        for c in df.columns:
+            cc = str(c).strip().lower()
+            if cc in ["date", "日期"]:
+                rename_map[c] = "Date"
+            elif cc in ["open", "開盤價", "開盤"]:
+                rename_map[c] = "Open"
+            elif cc in ["high", "最高價", "最高"]:
+                rename_map[c] = "High"
+            elif cc in ["low", "最低價", "最低"]:
+                rename_map[c] = "Low"
+            elif cc in ["close", "收盤價", "收盤"]:
+                rename_map[c] = "Close"
+            elif cc in ["volume", "成交量", "成交股數"]:
+                rename_map[c] = "Volume"
+        df = df.rename(columns=rename_map)
+        if "Date" not in df.columns or "Close" not in df.columns:
+            return None, FetchAttempt("CSV_UPLOAD", "uploaded", "SCHEMA_MISS", note=f"columns={list(df.columns)[:12]}")
+        df = _normalize_ohlcv(df)
+        return df, FetchAttempt("CSV_UPLOAD", "uploaded", "OK", note=f"rows={len(df)}")
+    except Exception as e:
+        return None, FetchAttempt("CSV_UPLOAD", "uploaded", "PARSE_ERR", note=str(e))
+
+
+def fetch_ohlcv_multi(code: str, months_back: int, csv_upload=None) -> Tuple[Optional[pd.DataFrame], str, List[FetchAttempt]]:
+    """
+    取得順序（更穩）：
+    1) TWSE_JSON
+    2) TPEX_JSON   ✅ 這次修正重點
+    3) YF
+    4) STOOQ
+    5) CSV_UPLOAD  ✅ 最後救命
+    """
     period_days = int(months_back * 31)
     attempts: List[FetchAttempt] = []
 
@@ -512,11 +527,11 @@ def fetch_ohlcv_multi(code: str, months_back: int) -> Tuple[Optional[pd.DataFram
     if df1 is not None and len(df1) >= 30:
         return df1, "TWSE_JSON", attempts
 
-    # 2) TPEX HTML (for OTC)
-    df2, att2 = fetch_tpex_html(code, months_back)
+    # 2) TPEX JSON
+    df2, att2 = fetch_tpex_json(code, months_back)
     attempts += att2
     if df2 is not None and len(df2) >= 30:
-        return df2, "TPEX_HTML", attempts
+        return df2, "TPEX_JSON", attempts
 
     # 3) Yahoo
     df3, att3 = fetch_yfinance(code, period_days)
@@ -529,6 +544,13 @@ def fetch_ohlcv_multi(code: str, months_back: int) -> Tuple[Optional[pd.DataFram
     attempts.append(att4)
     if df4 is not None and len(df4) >= 30:
         return df4, "STOOQ", attempts
+
+    # 5) Upload CSV fallback
+    if csv_upload is not None:
+        df5, att5 = _load_csv_fallback(csv_upload)
+        attempts.append(att5)
+        if df5 is not None and len(df5) >= 30:
+            return df5, "CSV_UPLOAD", attempts
 
     return None, "NONE", attempts
 
@@ -554,9 +576,14 @@ def professional_distance(current: float, ref: float, atr_v: float, max_chase_pc
     eff = 1 - (abs(dist_pct) / denom)
     eff = float(np.clip(eff, 0, 1))
 
-    pct_text = f"{dist_pct*100:+.2f}%（{'追價' if dist_pct>0 else '回測'}距離）"
-    atr_text = f"{dist_atr:+.2f} ATR" if not np.isnan(dist_atr) else "N/A"
-    eff_text = f"{eff*100:.0f}/100"
+    # 專業說法：Premium/Discount + ATR distance + efficiency
+    if dist_pct >= 0:
+        pct_text = f"Premium {dist_pct*100:.2f}%（相對觸發價溢價）"
+    else:
+        pct_text = f"Discount {abs(dist_pct)*100:.2f}%（相對觸發價折價）"
+
+    atr_text = f"{dist_atr:+.2f} ATR（標準化距離）" if not np.isnan(dist_atr) else "N/A"
+    eff_text = f"{eff*100:.0f}/100（Entry Efficiency）"
     return {"pct": pct_text, "atr": atr_text, "eff": eff_text}
 
 
@@ -567,13 +594,6 @@ def build_breakout_plan(
     stop_atr_mult: float,
     target_rr: float,
 ) -> Dict[str, Dict]:
-    """
-    趨勢突破型：
-    - Breakout Trigger：近 N 日壓力（high）+ buffer
-    - Pullback Buy：突破後回測（EMA20 / BB_M）不破
-    - Invalidation：跌回 trigger 下方 + ATR stop
-    - Targets：RR 目標 & 參考布林上緣/延伸
-    """
     last = df.iloc[-1]
     close = float(last["Close"])
     atr_v = float(last["ATR14"]) if pd.notna(last["ATR14"]) else np.nan
@@ -587,28 +607,23 @@ def build_breakout_plan(
         atr_v = max(1e-6, close * 0.02)
 
     trigger = res + (trigger_buffer_atr * atr_v)
-    # chase guard: if trigger too far above current, keep it as "wait"
-    chase_dist = (trigger - close) / close if close > 0 else 999
 
-    # pullback zone: between max(ema20, bb_m) and that - 0.6 ATR
+    # pullback zone
     pb_center = max(ema20_v, bb_m)
     pb_low = pb_center - 0.6 * atr_v
     pb_high = pb_center + 0.2 * atr_v
 
-    # stop: below pullback low (or below trigger) by ATR multiple
     stop = min(pb_low, trigger) - (stop_atr_mult * atr_v)
 
-    # targets: RR from trigger entry baseline
     entry_ref = min(trigger, close * (1 + max_chase_pct))  # realistic reference entry
     risk = max(entry_ref - stop, 0.01)
     target = entry_ref + risk * target_rr
 
-    # cap target with BB upper extension if available (still allow a bit above)
     if not np.isnan(bb_u) and bb_u > 0:
-        target = max(target, bb_u)  # breakout expects upper band expansion
+        target = max(target, bb_u)
 
     return {
-        "trigger": {"price": float(trigger), "chase_dist": float(chase_dist)},
+        "trigger": {"price": float(trigger)},
         "pullback": {"low": float(pb_low), "high": float(pb_high), "center": float(pb_center)},
         "risk": {"entry_ref": float(entry_ref), "stop": float(stop), "target": float(target), "atr": float(atr_v)},
         "sr": {"support": float(sup), "resistance": float(res)},
@@ -616,25 +631,29 @@ def build_breakout_plan(
 
 
 def breakout_action(df: pd.DataFrame, flags: Dict[str, bool], plan: Dict, max_chase_pct: float) -> Tuple[str, str]:
+    """
+    ✅ 你指定：突破追價進場（優先）
+    條件更貼近實戰：突破觸發價 + 動能至少一項成立（MACD/KD/量能其一）
+    """
     last = df.iloc[-1]
     close = float(last["Close"])
     trigger = plan["trigger"]["price"]
     pb = plan["pullback"]
     chase_dist = (close - trigger) / trigger if trigger > 0 else 999
+
     is_breaking = close >= trigger
     is_in_pullback = (pb["low"] <= close <= pb["high"])
 
-    # Breakout BUY condition: price breaks trigger + volume + macd
-    if is_breaking and flags.get("vol_up", False) and flags.get("macd_bull", False):
+    momentum_ok = flags.get("macd_bull", False) or flags.get("kd_bull", False) or flags.get("vol_up", False)
+
+    if is_breaking and momentum_ok:
         if chase_dist <= max_chase_pct:
-            return "BUY", "突破成立：價格站上突破觸發價，且量能放大 + MACD 翻多（可分批進場，嚴守失效點）。"
-        return "WATCH", "突破成立但追價距離過大：等待回測不破（Pullback）再進場，避免高位追價。"
+            return "BUY", "追突破：價格站上突破觸發價，且動能條件成立（MACD/KD/量能至少一項），可分批進場並嚴守失效點。"
+        return "WATCH", "突破成立但追價距離過大：不追高，等待回測不破（Pullback）再進場。"
 
-    # Pullback entry: price in pullback zone + momentum not broken
     if is_in_pullback and (flags.get("macd_hist_up", True) or flags.get("kd_bull", False)):
-        return "BUY", "回測買點：突破後回測區間內止跌，動能未破（屬於『回測不破』的二次進場）。"
+        return "BUY", "回測買點：突破後回測區間內止跌，動能未破（屬『回測不破』二次進場）。"
 
-    # Sell / reduce: overbought / upper band + weakening
     if flags.get("rsi_overbought", False) and (not flags.get("macd_hist_up", True)):
         return "SELL", "過熱轉弱：RSI 過熱且動能減弱（可分批減碼/停利）。"
 
@@ -703,9 +722,9 @@ with st.sidebar:
     debug = st.checkbox("顯示下載除錯資訊（Debug）", value=False)
 
     st.divider()
-    st.subheader("策略：趨勢突破型（你選的）")
+    st.subheader("策略：趨勢突破型（突破追價進場）")
 
-    max_chase_pct = st.slider("最大可接受追價距離（%）", 0.02, 0.18, 0.06, 0.01)  # 追價超過就不買，等回測
+    max_chase_pct = st.slider("最大可接受追價距離（%）", 0.02, 0.18, 0.06, 0.01)
     trigger_buffer_atr = st.slider("突破觸發 buffer（ATR 倍數）", 0.0, 0.8, 0.2, 0.05)
     stop_atr_mult = st.slider("失效止損距離（ATR 倍數）", 0.8, 3.0, 1.6, 0.1)
     target_rr = st.slider("目標風險報酬（RR）", 1.2, 5.0, 2.2, 0.1)
@@ -715,6 +734,10 @@ with st.sidebar:
     account_ntd = st.slider("資金規模（NTD）", 5_000_000, 10_000_000, 7_000_000, step=100_000)
     risk_pct = st.slider("每筆最大風險（% of 資金）", 0.2, 2.0, 0.8, 0.1) / 100.0
     max_position_pct = st.slider("單筆最大持倉（% of 資金）", 5.0, 40.0, 20.0, 1.0) / 100.0
+
+    st.divider()
+    st.subheader("最後救命：CSV 上傳備援")
+    csv_upload = st.file_uploader("上傳日線 CSV（export.csv 也可以）", type=["csv"])
 
 
 # -----------------------------
@@ -745,14 +768,18 @@ def analyze_one(code: str):
         st.warning("請輸入股票代號（例如：2330 / 2317 / 6274）")
         return
 
-    df, src, attempts = fetch_ohlcv_multi(code, months_back=months_back)
+    df, src, attempts = fetch_ohlcv_multi(code, months_back=months_back, csv_upload=csv_upload)
 
-    if debug:
+    # 如果抓不到，強制顯示診斷（就算你沒勾 debug 也給你看）
+    if (df is None or df.empty) and attempts:
+        render_diagnostics(attempts)
+
+    if debug and attempts:
         render_diagnostics(attempts)
 
     if df is None or df.empty:
         st.error("❌ 無法取得資料（所有備援來源都失敗）。")
-        st.info("建議：勾選 Debug 觀看 preview（通常是被回傳 HTML / WAF 擋），或先按『網路測試』。")
+        st.info("✅ 解法：把你手上 export.csv 上傳（左側 CSV 上傳備援），馬上就能操作。")
         return
 
     df = compute_signals(df)
@@ -775,7 +802,7 @@ def analyze_one(code: str):
     c3.metric("資料來源", src)
     c4.metric("最後日期/筆數", f"{df.index[-1].date()} / {len(df)}")
 
-    st.markdown("## 📌 當下是否可操作？（趨勢突破型）")
+    st.markdown("## 📌 當下是否可操作？（突破追價進場）")
     if action == "BUY":
         st.success(f"🟢 **BUY / 可操作**：{reason}")
     elif action == "SELL":
@@ -790,26 +817,22 @@ def analyze_one(code: str):
     risk = plan["risk"]
 
     st.markdown("## 🧭 突破交易計畫（專業描述）")
-
     dist = professional_distance(close, trigger, atr_v, max_chase_pct)
 
     st.markdown(
         f"""
 **① Breakout Trigger（突破觸發價）**：**{trigger:,.2f}**  
-• 現價相對觸發價：**{dist['pct']}** / **{dist['atr']}** / Entry Efficiency：**{dist['eff']}**  
-• 追價控管：若追價距離 > **{max_chase_pct*100:.0f}%** → 建議等待回測（Pullback）再進  
+• 估值距離：**{dist['pct']}**｜**{dist['atr']}**｜**{dist['eff']}**  
+• 追價控管：追價距離 > **{max_chase_pct*100:.0f}%** → 不追高，等 Pullback  
 
 **② Pullback Buy（回測買點區）**：**{pb['low']:,.2f} – {pb['high']:,.2f}**（中心：{pb['center']:,.2f}）  
-• 定義：突破後回測到均線/中軌附近止跌，屬「二次進場」  
 
 **③ Invalidation（失效止損）**：**{risk['stop']:,.2f}**  
-• 定義：跌破此價位代表突破失效（避免套牢）  
 
 **④ Targets（目標價）**：**{risk['target']:,.2f}**（RR≈{target_rr:.1f}）  
 """
     )
 
-    # Position sizing
     st.markdown("## 🧮 倉位建議（500–1000萬 / 風險控管）")
     size = position_sizing(
         account_ntd=account_ntd,
@@ -824,7 +847,6 @@ def analyze_one(code: str):
     d3.metric("建議股數（shares）", f"{size['shares']:,.0f}")
     d4.metric("部位金額 / 佔資金", f"{size['pos_value']:,.0f} / {size['pos_pct']*100:.1f}%")
 
-    # Indicators quick view
     st.markdown("## 📈 指標狀態（快速判讀）")
     ind = pd.DataFrame([{
         "Close": float(last["Close"]),
@@ -844,12 +866,12 @@ def analyze_one(code: str):
     }])
     st.dataframe(ind, use_container_width=True, hide_index=True)
 
-    st.markdown("## 🧷 布林通道圖（無 Plotly / Matplotlib）")
+    st.markdown("## 🧷 布林通道圖（Matplotlib）")
     plot_bollinger(df, code)
 
 
 # -----------------------------
-# Top10 scanner (Breakout style)
+# Top10 scanner
 # -----------------------------
 def scan_top10(stock_pool: List[str]):
     seen = set()
@@ -872,7 +894,7 @@ def scan_top10(stock_pool: List[str]):
 
     prog = st.progress(0)
     for i, code in enumerate(pool, start=1):
-        df, src, attempts = fetch_ohlcv_multi(code, months_back=months_back)
+        df, src, attempts = fetch_ohlcv_multi(code, months_back=months_back, csv_upload=None)  # Top10 不用 upload
         diag_map[code] = attempts
 
         if df is None or df.empty:
@@ -914,7 +936,6 @@ def scan_top10(stock_pool: List[str]):
 
     out = pd.DataFrame(rows).drop_duplicates(subset=["股票"], keep="first")
 
-    # 排序：BUY > WATCH > SELL；分數高優先；追價距離越小越好（負數=尚未突破）
     rank = {"BUY": 0, "WATCH": 1, "SELL": 2}
     out["rank"] = out["當下判斷"].map(rank).fillna(9).astype(int)
     out["abs_chase"] = out["追價距離(%)"].abs()
@@ -922,7 +943,7 @@ def scan_top10(stock_pool: List[str]):
     out = out.sort_values(["rank", "AI分數", "abs_chase"], ascending=[True, False, True]).head(10)
     out = out.drop(columns=["rank", "abs_chase"])
 
-    st.markdown("## 🔥 AI 強勢股 Top 10（趨勢突破型排序）")
+    st.markdown("## 🔥 AI 強勢股 Top 10（突破追價排序）")
     st.dataframe(out, use_container_width=True, hide_index=True)
 
     if debug:
@@ -939,25 +960,24 @@ if mode == "單一股票分析":
     with colL:
         code = st.text_input("請輸入股票代號", value="6274")
         if st.button("網路測試（建議先按一次）"):
-            url = "https://www.twse.com.tw/"
-            r, err, preview = _requests_get(url, timeout=8)
-            if r is None:
-                st.error(f"TWSE ping 失敗：{err}")
-            else:
-                st.success(f"TWSE ping：HTTP {r.status_code} / bytes {len(r.text or '')}")
-                st.caption(f"preview：{preview}")
-            url2 = "https://www.tpex.org.tw/"
-            r2, err2, preview2 = _requests_get(url2, timeout=8)
-            if r2 is None:
-                st.error(f"TPEX ping 失敗：{err2}")
-            else:
-                st.success(f"TPEX ping：HTTP {r2.status_code} / bytes {len(r2.text or '')}")
-                st.caption(f"preview：{preview2}")
+            for name, url in [
+                ("TWSE", "https://www.twse.com.tw/"),
+                ("TPEX", "https://www.tpex.org.tw/"),
+                ("TWSE API", "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?response=json&date=20260101&stockNo=2330"),
+                ("TPEX API", "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&o=json&d=114/02&stkno=6274"),
+            ]:
+                r, err, preview = _requests_get(url, timeout=10)
+                if r is None:
+                    st.error(f"{name} ping 失敗：{err}")
+                else:
+                    st.success(f"{name}：HTTP {r.status_code} / bytes {len(r.text or '')}")
+                    st.caption(f"preview：{preview}")
+
     with colR:
         analyze_one(code)
 
 else:
-    st.markdown("## Top 10 掃描器（趨勢突破型）")
+    st.markdown("## Top 10 掃描器（突破追價進場）")
     st.caption("雲端避免一次掃全市場；建議先用 20–35 檔測試。")
 
     default_pool = "2330,2317,2454,3037,8046,2382,2303,4967,2603,2609,2882,2881,2891,0050,006208,6274"
