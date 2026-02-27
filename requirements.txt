@@ -1,6 +1,6 @@
 streamlit
 pandas
 numpy
+requests
+matplotlib
 yfinance
-ta
-altair
