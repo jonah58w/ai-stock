@@ -5,4 +5,4 @@ matplotlib>=3.7.0
 requests>=2.31.0
 yfinance>=0.2.40
 pandas_datareader>=0.10.0
-FinMind==1.3.5   # 明確指定穩定版，避免最新版 bug
+FinMind>=1.3.0  # 不要用 ==1.3.5，如果有相容問題可降到 >=1.2.0
