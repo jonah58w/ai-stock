@@ -1,13 +1,15 @@
 # app.py
-# AI Stock Trading Assistant（TW）- V9.2 CLEAN NAV
-# ✅ 用「頁面切換」取代 Tabs：不再同頁出現兩支股票代號造成混淆
-# ✅ 單股頁：一定顯示 BUY/SELL/WAIT + 布林通道判斷 + 預估未來買賣點 + 圖
-# ✅ 雷達頁：只做掃描與「帶入單股」(更新同一個 analysis_code)
-# ✅ FinMind 優先 + yfinance fallback（MultiIndex 修正）
+# AI Stock Trading Assistant（TW）- V9.3
+# ✅ 兩頁式：雷達 / 單股決策（不再同頁出現兩支股票）
+# ✅ 單股頁：BUY/SELL/WAIT + 布林通道判斷 + 預估買賣點 + 圖
+# ✅ 資料源：FinMind → yfinance(.TW/.TWO 重試) → Stooq(第三備援)
+# ✅ 逐路診斷收在 expander（不吵）
 # ⚠️ 僅供資訊顯示與風控演算，不構成投資建議、不自動下單
 
 from __future__ import annotations
+
 import datetime as dt
+import time
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -18,12 +20,14 @@ from ta.trend import EMAIndicator, MACD
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 
+from pandas_datareader import data as pdr  # ✅ Stooq 備援需要
+
 # -----------------------------
 # Page
 # -----------------------------
-st.set_page_config(page_title="AI Stock Trading Assistant (TW) - V9.2", layout="wide")
-st.title("⚡ AI Stock Trading Assistant（V9.2：雷達 / 單股決策 兩頁式）")
-st.caption("BUILD: V9.2-NAV-NO-DOUBLE-CODE-BB-POINTS-20260228")
+st.set_page_config(page_title="AI Stock Trading Assistant (TW) - V9.3", layout="wide")
+st.title("⚡ AI Stock Trading Assistant（V9.3：雷達 / 單股決策 兩頁式 + 多來源備援）")
+st.caption("BUILD: V9.3-NAV-TRIPLE-SOURCE-RETRY-BB-POINTS-20260228")
 
 DEFAULT_WATCHLIST = [
     "2330","2317","2303","2454","3661","3037","2382","2376",
@@ -121,27 +125,45 @@ def _make_yf_candidates(code: str) -> list[str]:
     return [code]
 
 # -----------------------------
-# Data loaders (FinMind -> YF)
+# Data loaders (FinMind -> YF retry -> Stooq)
 # -----------------------------
 @st.cache_data(ttl=cache_ttl)
-import time
-from pandas_datareader import data as pdr
-
-def load_from_stooq(code_digits: str, start: str, end: str) -> pd.DataFrame:
-    """
-    Stooq 台股格式：2330.tw
-    回傳欄位通常是: Date, Open, High, Low, Close, Volume
-    """
+def load_from_finmind(code_digits: str, start: str, end: str) -> pd.DataFrame:
     try:
-        sym = f"{code_digits}.tw"
-        df = pdr.DataReader(sym, "stooq", start=start, end=end)  # index=Date
-        if df is None or df.empty:
+        from FinMind.data import DataLoader
+    except Exception:
+        return pd.DataFrame()
+    try:
+        dl = DataLoader()
+        raw = dl.taiwan_stock_daily(stock_id=code_digits, start_date=start, end_date=end)
+        if raw is None or raw.empty:
             return pd.DataFrame()
-        df = df.reset_index()
-        df = df.rename(columns={"Date":"Date","Open":"Open","High":"High","Low":"Low","Close":"Close","Volume":"Volume"})
+        df = pd.DataFrame({
+            "Date": pd.to_datetime(raw["date"], errors="coerce"),
+            "Open": raw["open"],
+            "High": raw.get("max", np.nan),
+            "Low": raw.get("min", np.nan),
+            "Close": raw["close"],
+            "Volume": raw.get("Trading_Volume", raw.get("volume", 0)),
+        })
         return _ensure_ohlcv(df)
     except Exception:
         return pd.DataFrame()
+
+@st.cache_data(ttl=cache_ttl)
+def load_from_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame:
+    try:
+        df = yf.download(
+            ticker, start=start, end=end,
+            progress=False, auto_adjust=False,
+            group_by="column", threads=False
+        )
+    except Exception:
+        return pd.DataFrame()
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = _flatten_yf_columns(df)
+    return _ensure_ohlcv(df)
 
 def load_from_yfinance_retry(ticker: str, start: str, end: str, retries: int = 2, sleep_s: float = 0.6) -> pd.DataFrame:
     last = pd.DataFrame()
@@ -152,14 +174,20 @@ def load_from_yfinance_retry(ticker: str, start: str, end: str, retries: int = 2
         time.sleep(sleep_s)
     return last
 
-def load_data_best_effort(code: str, start: str, end: str) -> tuple[pd.DataFrame, str, list[dict]]:
-    """
-    回傳 (df, source_used, diag_list)
-    diag_list 讓你在 UI 看得到：每一路是 EMPTY 還是 OK
-    """
-    code = (code or "").strip().upper()
-    diag = []
+def load_from_stooq(code_digits: str, start: str, end: str) -> pd.DataFrame:
+    try:
+        sym = f"{code_digits}.tw"
+        df = pdr.DataReader(sym, "stooq", start=start, end=end)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        df = df.reset_index()
+        return _ensure_ohlcv(df)
+    except Exception:
+        return pd.DataFrame()
 
+def load_data_best_effort(code: str, start: str, end: str) -> tuple[pd.DataFrame, str, list[dict]]:
+    code = (code or "").strip().upper()
+    diag: list[dict] = []
     if not code:
         return pd.DataFrame(), "", diag
 
@@ -308,14 +336,12 @@ def single_decision(df_i: pd.DataFrame) -> dict:
         else:
             boll_state = "正常"
 
-    # Rules
     trend_ok = (price > ema20 and ema20 > ema60)
     breakout_ok = (price > float(prev5_high))
     vol_ok = (vol_mean > 0 and vol > 1.3 * vol_mean)
     macd_ok = (macd_h > 0)
     rsi_ok = (rsi > 55)
 
-    # Forecast points
     buy_pull = (round(ema20 * 0.99, 2), round(ema20 * 1.01, 2))
     buy_break = round(float(prev5_high) + 0.2 * atr, 2)
     stop = round(price - 1.2 * atr, 2)
@@ -344,13 +370,11 @@ def single_decision(df_i: pd.DataFrame) -> dict:
         "decision": decision,
         "decision_text": decision_text,
         "price": round(price, 2),
-
         "buy_pull": buy_pull,
         "buy_break": buy_break,
         "stop": stop,
         "target_rr": target_rr,
         "target_bb": target_bb,
-
         "boll_pos": boll_pos,
         "boll_state": boll_state,
         "reasons": reasons,
@@ -391,14 +415,18 @@ if page.startswith("🎯"):
     start = (today - dt.timedelta(days=int(single_lookback))).strftime("%Y-%m-%d")
     end = (today + dt.timedelta(days=1)).strftime("%Y-%m-%d")
 
-    df_raw, src = load_data_best_effort(code, start, end)
+    df_raw, src, diag = load_data_best_effort(code, start, end)
     if df_raw.empty:
-        st.error("❌ 無法取得資料（FinMind / yfinance 均失敗）。請換代號或稍後再試。")
+        st.error("❌ 無法取得資料（FinMind / yfinance / Stooq 均失敗）。請換代號或稍後再試。")
+        with st.expander("🧩 逐路診斷（展開）", expanded=False):
+            st.dataframe(pd.DataFrame(diag), use_container_width=True)
         st.stop()
 
     df_i = add_indicators(df_raw)
     if df_i.empty:
         st.error("❌ 指標計算失敗或資料不足。請把回溯天數改 365/730 再試。")
+        with st.expander("🧩 逐路診斷（展開）", expanded=False):
+            st.dataframe(pd.DataFrame(diag), use_container_width=True)
         st.stop()
 
     info = single_decision(df_i)
@@ -432,6 +460,9 @@ if page.startswith("🎯"):
         with st.expander("🧠 判斷依據（展開）", expanded=False):
             for r in info["reasons"]:
                 st.write("• ", r)
+
+        with st.expander("🧩 逐路診斷（展開）", expanded=False):
+            st.dataframe(pd.DataFrame(diag), use_container_width=True)
     else:
         st.write(info)
         plot_single_chart(df_i, info, title=f"{code} | 來源：{src}")
@@ -453,20 +484,20 @@ else:
 
     for i, s in enumerate(WATCHLIST):
         status.write(f"掃描中：{s} ({i+1}/{len(WATCHLIST)})")
-        df, src = load_data_best_effort(s, start, end)
+        df, src, diag = load_data_best_effort(s, start, end)
 
         if df.empty:
-            diag_rows.append({"股票": s, "來源": src or "-", "狀態": "EMPTY", "備註": "無資料"})
+            diag_rows.append({"股票": s, "來源": src or "-", "狀態": "EMPTY", "備註": "無資料", "diag": str(diag)})
             progress.progress(int((i + 1) / len(WATCHLIST) * 100))
             continue
 
         score, trade = breakout_score(df)
         if trade is None:
-            diag_rows.append({"股票": s, "來源": src, "狀態": "SKIP", "備註": f"指標/資料不足（score={score}）"})
+            diag_rows.append({"股票": s, "來源": src, "狀態": "SKIP", "備註": f"指標/資料不足（score={score}）", "diag": str(diag)})
             progress.progress(int((i + 1) / len(WATCHLIST) * 100))
             continue
 
-        diag_rows.append({"股票": s, "來源": src, "狀態": "OK", "備註": f"score={score}"})
+        diag_rows.append({"股票": s, "來源": src, "狀態": "OK", "備註": f"score={score}", "diag": str(diag)})
 
         if score >= int(score_watch):
             results.append({
@@ -512,7 +543,7 @@ else:
             pick = st.selectbox("選一檔", options=df_results["股票"].tolist(), index=0)
             if st.button("➡️ 設定為單股分析代號"):
                 st.session_state["analysis_code"] = str(pick)
-                st.success(f"已設定 analysis_code = {pick}；請到左側切換到「單股決策」頁面查看。")
+                st.success(f"已設定 analysis_code = {pick}；請切到「單股決策」頁面查看。")
         else:
             st.caption("目前雷達沒有可用標的可選。")
 
