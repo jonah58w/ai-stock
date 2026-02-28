@@ -1,208 +1,163 @@
 # app.py
-# AI 台股量化專業平台（無 Plotly / 全功能保留 / V23.2+ 修正版）
-# ✅ 單一股票分析 + Top10 掃描器
-# ✅ 多來源備援：FinMind(首選) → yfinance → Stooq → CSV上傳
-# ✅ 逐路診斷（哪一路失敗、為什麼）
-# ✅ 指標共振：MA/RSI/MACD/KD/布林/ATR/量能
-# ✅ 布林通道 + 均線 + 訊號標記（Matplotlib）
-# ✅ Retry + 缺套件提示（側邊欄）
-#
-# 注意：
-# - Streamlit Cloud 若缺套件：requirements.txt 請加上 FinMind / yfinance / pandas_datareader / matplotlib
-# - FinMind 需要 token：Secrets 設 FINMIND_TOKEN="xxxxx"
-#
-# 免責聲明：本工具僅做資訊顯示與風控演算，不構成投資建議，不會自動下單。
+# AI 台股量化專業平台（無 Plotly / 全功能保留 / 逐路診斷 + Retry / 不需 Secrets）
+# ✅ 多來源備援：FinMind(可選手動Token) → yfinance → Stooq → CSV Upload
+# ✅ WAF/HTML 偵測、Retry Backoff、逐路診斷表
+# ✅ 單股分析：指標共振 + 當下買賣點判斷 + 未來區間(近端/深回檔/近端賣/延伸賣)
+# ✅ 布林通道圖（Matplotlib）
+# ✅ Top10 掃描器（去重 + 顯示當下可操作判斷與距離）
+# ⚠️ 僅供資訊顯示，不構成投資建議，不自動下單
 
 from __future__ import annotations
 
+import io
 import math
-import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-
-# -----------------------------
-# Dependency checks (no plotly)
-# -----------------------------
+# ----------------------------
+# Optional deps
+# ----------------------------
 DEPENDENCIES: Dict[str, bool] = {
-    "requests": True,
     "matplotlib": True,
-    "finmind": False,
+    "requests": True,
     "yfinance": False,
     "pandas_datareader": False,
+    "finmind": False,
 }
 
-# FinMind
-try:
-    from FinMind.data import DataLoader  # type: ignore
-    DEPENDENCIES["finmind"] = True
-except Exception:
-    DataLoader = None  # type: ignore
+yf = None
+pdr = None
+DataLoader = None
 
-# yfinance
 try:
     import yfinance as yf  # type: ignore
     DEPENDENCIES["yfinance"] = True
 except Exception:
-    yf = None  # type: ignore
+    yf = None
 
-# pandas_datareader (optional fallback)
 try:
     from pandas_datareader import data as pdr  # type: ignore
     DEPENDENCIES["pandas_datareader"] = True
 except Exception:
-    pdr = None  # type: ignore
+    pdr = None
+
+try:
+    from FinMind.data import DataLoader  # type: ignore
+    DEPENDENCIES["finmind"] = True
+except Exception:
+    DataLoader = None
 
 
-# -----------------------------
-# Utilities
-# -----------------------------
-def _as_str_ticker(x) -> str:
-    """防止 tuple/list/set 被誤傳進來造成 yfinance .lower() 爆炸。"""
-    if isinstance(x, (tuple, list, set)):
-        x = list(x)[0] if len(x) else ""
-    x = "" if x is None else str(x)
-    return x.strip()
+# ----------------------------
+# App config
+# ----------------------------
+st.set_page_config(page_title="AI 台股量化專業平台（無 Plotly）", layout="wide")
 
+TITLE = "🧠 AI 台股量化專業平台（無 Plotly / 全功能保留）"
+SUBTITLE = "多源備援 + 逐路診斷 + 指標共振 + 布林通道圖 + Top10 掃描 + 交易計畫（不自動下單）"
 
-def _retry(fn, times: int = 3, sleep: float = 0.7):
-    last = None
-    for i in range(times):
-        try:
-            return fn()
-        except Exception as e:
-            last = e
-            time.sleep(sleep * (i + 1))
-    raise last
-
-
-def _safe_float(x, default=np.nan) -> float:
-    try:
-        return float(x)
-    except Exception:
-        return default
-
-
-def _human_pct(p: float) -> str:
-    if p is None or np.isnan(p):
-        return "N/A"
-    return f"{p*100:.1f}%"
-
-
-def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Ensure columns: Date, Open, High, Low, Close, Volume
-    Date => datetime; sort asc; drop duplicates.
-    """
-    df = df.copy()
-
-    # Find date col
-    if "Date" not in df.columns:
-        for c in df.columns:
-            if str(c).lower() in ("date", "datetime", "time"):
-                df = df.rename(columns={c: "Date"})
-                break
-
-    # Standardize OHLCV column names
-    rename_map = {}
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        if cl in ("open", "o"):
-            rename_map[c] = "Open"
-        elif cl in ("high", "h", "max"):
-            rename_map[c] = "High"
-        elif cl in ("low", "l", "min"):
-            rename_map[c] = "Low"
-        elif cl in ("close", "c", "adj close", "adjclose"):
-            rename_map[c] = "Close"
-        elif cl in ("volume", "vol", "trading_volume"):
-            rename_map[c] = "Volume"
-    df = df.rename(columns=rename_map)
-
-    # Keep only required columns if exist
-    keep = [c for c in ["Date", "Open", "High", "Low", "Close", "Volume"] if c in df.columns]
-    df = df[keep].copy()
-
-    # Parse Date
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    df = df.dropna(subset=["Date"])
-
-    # Numeric conversions
-    for c in ["Open", "High", "Low", "Close", "Volume"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    df = df.dropna(subset=["Close"])
-    df = df.sort_values("Date").drop_duplicates(subset=["Date"], keep="last").reset_index(drop=True)
-
-    # Fill Volume if missing
-    if "Volume" not in df.columns:
-        df["Volume"] = np.nan
-
-    return df
-
-
-# -----------------------------
-# Fetch attempts (diagnosis)
-# -----------------------------
+# ----------------------------
+# Data structures
+# ----------------------------
 @dataclass
 class FetchAttempt:
     source: str
-    result: str
-    url: str = ""
-    status: str = ""
-    snippet: str = ""
+    url: str
+    result: str  # OK / EMPTY / WAF_HTML / HTTP_xxx / EXC / NO_MODULE / NO_TOKEN / TOO_SHORT
+    status_code: Optional[int] = None
     note: str = ""
 
 
-# -----------------------------
-# Data sources
-# -----------------------------
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_finmind(code: str, months_back: int) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
-    code = _as_str_ticker(code)
-    if not DEPENDENCIES.get("finmind", False) or DataLoader is None:
-        return None, FetchAttempt("FinMind", "NO_MODULE", note="缺少套件：pip install FinMind")
+# ----------------------------
+# Utilities
+# ----------------------------
+def _is_html_like(text: str) -> bool:
+    t = (text or "").lstrip().lower()
+    if "<html" in t[:300] or "<!doctype html" in t[:300]:
+        return True
+    # 常見 WAF 關鍵詞
+    waf_markers = ["access denied", "forbidden", "cloudflare", "akamai", "incapsula", "waf"]
+    return any(m in t[:1200] for m in waf_markers)
 
-    # token from secrets or manual input
-    token = None
+
+def _safe_float(x) -> float:
     try:
-        token = st.secrets.get("FINMIND_TOKEN", None)
+        if pd.isna(x):
+            return np.nan
+        s = str(x).replace(",", "").replace("--", "").strip()
+        if s == "":
+            return np.nan
+        return float(s)
     except Exception:
-        token = None
-    token = token or st.session_state.get("FINMIND_TOKEN_INPUT", "")
+        return np.nan
 
+
+def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    # Expect columns: Date, Open, High, Low, Close, Volume
+    df = df.copy()
+    if "Date" not in df.columns:
+        raise ValueError("Missing Date")
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").drop_duplicates("Date")
+    for c in ["Open", "High", "Low", "Close"]:
+        if c in df.columns:
+            df[c] = df[c].apply(_safe_float)
+    if "Volume" in df.columns:
+        df["Volume"] = df["Volume"].apply(_safe_float)
+    df = df.dropna(subset=["Date", "Close"])
+    df = df.set_index("Date")
+    # remove zeros
+    df = df[df["Close"] > 0]
+    return df
+
+
+def _http_get_retry(url: str, headers: Optional[dict] = None, timeout: int = 15, retries: int = 3, backoff: float = 0.8) -> Tuple[Optional[requests.Response], str]:
+    last_err = ""
+    h = headers or {}
+    # 加 UA 比較不容易被直接擋
+    h.setdefault("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36")
+    h.setdefault("Accept", "*/*")
+    for i in range(retries):
+        try:
+            r = requests.get(url, headers=h, timeout=timeout)
+            return r, ""
+        except Exception as e:
+            last_err = str(e)
+            time.sleep(backoff * (2 ** i))
+    return None, last_err
+
+
+# ----------------------------
+# Fetchers
+# ----------------------------
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_finmind(code: str, months_back: int, token: str) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
+    if not DEPENDENCIES.get("finmind", False) or DataLoader is None:
+        return None, FetchAttempt("FinMind", "", "NO_MODULE", note="未安裝 FinMind（可跳過）")
     if not token:
-        return None, FetchAttempt("FinMind", "NO_TOKEN", note="請在 Secrets 設定 FINMIND_TOKEN 或側邊欄手動輸入")
-
+        return None, FetchAttempt("FinMind", "", "NO_TOKEN", note="未輸入 Token（已跳過 FinMind）")
     try:
-        end = datetime.now().strftime("%Y-%m-%d")
-        start = (datetime.now() - timedelta(days=months_back * 35 + 40)).strftime("%Y-%m-%d")
-
         dl = DataLoader()
         dl.login_by_token(api_token=token)
 
-        def _do():
-            return dl.taiwan_stock_daily(stock_id=code, start_date=start, end_date=end)
+        end = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=months_back * 35 + 30)).strftime("%Y-%m-%d")
 
-        df = _retry(_do, times=3, sleep=0.8)
+        raw = dl.taiwan_stock_daily(stock_id=code, start_date=start, end_date=end)
+        if raw is None or len(raw) == 0:
+            return None, FetchAttempt("FinMind", f"{code}", "EMPTY", note="empty response")
 
-        if df is None or len(df) == 0:
-            return None, FetchAttempt("FinMind", "EMPTY", note="FinMind 回傳空資料")
-
-        # rename based on FinMind daily schema
-        df = df.rename(columns={
+        df = pd.DataFrame(raw).rename(columns={
             "date": "Date",
             "open": "Open",
             "max": "High",
@@ -210,170 +165,162 @@ def fetch_finmind(code: str, months_back: int) -> Tuple[Optional[pd.DataFrame], 
             "close": "Close",
             "Trading_Volume": "Volume",
         })
-
         df = _normalize_ohlcv(df)
-        if len(df) < 10:
-            return None, FetchAttempt("FinMind", "TOO_SHORT", note=f"rows={len(df)}")
-
-        return df, FetchAttempt("FinMind", "OK", note=f"rows={len(df)}")
+        if len(df) < 30:
+            return None, FetchAttempt("FinMind", f"{code}", "TOO_SHORT", note=f"rows={len(df)}")
+        return df, FetchAttempt("FinMind", f"{code}", "OK", note=f"rows={len(df)}")
     except Exception as e:
-        return None, FetchAttempt("FinMind", "EXC", note=str(e))
+        return None, FetchAttempt("FinMind", f"{code}", "EXC", note=str(e))
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def fetch_yfinance(code: str, period_days: int) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
-    code = _as_str_ticker(code)
+def fetch_yfinance(code: str, days: int) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
     if not DEPENDENCIES.get("yfinance", False) or yf is None:
-        return None, FetchAttempt("YF", "NO_MODULE", note="缺少套件：pip install yfinance")
-
-    tickers: List[str]
-    if re.fullmatch(r"\d{4,6}", code):
-        tickers = [f"{code}.TW", f"{code}.TWO"]
-    else:
-        tickers = [code]
-
+        return None, FetchAttempt("YF", "", "NO_MODULE", note="未安裝 yfinance")
     try:
-        for tk in tickers:
-            tk = _as_str_ticker(tk)
-            if not tk:
+        # 台股：先試 .TW 再試 .TWO
+        tickers = []
+        if code.isdigit() and len(code) <= 6:
+            tickers = [f"{code}.TW", f"{code}.TWO"]
+        else:
+            tickers = [code]
+
+        for t in tickers:
+            df = yf.download(t, period=f"{max(days, 60)}d", interval="1d", auto_adjust=False, progress=False)
+            if df is None or df.empty:
                 continue
-
-            def _do():
-                return yf.download(
-                    tk,
-                    period=f"{max(30, period_days)}d",
-                    interval="1d",
-                    auto_adjust=False,
-                    progress=False,
-                )
-
-            raw = _retry(_do, times=3, sleep=0.8)
-
-            if raw is None or len(raw) == 0:
-                continue
-
-            df = raw.copy()
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = [c[0] for c in df.columns]
-
-            df = df.reset_index().rename(columns={"Date": "Date", "Datetime": "Date"})
-            df = df.rename(columns={
-                "Open": "Open",
-                "High": "High",
-                "Low": "Low",
-                "Close": "Close",
-                "Adj Close": "Close",
-                "Volume": "Volume",
-            })
-
+            df = df.reset_index()
+            # yfinance 欄位可能是 Date 或 Datetime
+            if "Date" not in df.columns and "Datetime" in df.columns:
+                df = df.rename(columns={"Datetime": "Date"})
+            df = df.rename(columns={"Open": "Open", "High": "High", "Low": "Low", "Close": "Close", "Volume": "Volume"})
+            df = df[["Date", "Open", "High", "Low", "Close", "Volume"]]
             df = _normalize_ohlcv(df)
-
-            if len(df) >= 10:
-                return df, FetchAttempt("YF", "OK", note=f"{tk} rows={len(df)}")
-
-        return None, FetchAttempt("YF", "EMPTY", note="yfinance 無資料（可能被擋或代號不對）")
+            if len(df) >= 30:
+                return df, FetchAttempt("YF", t, "OK", note=f"rows={len(df)}")
+            else:
+                return None, FetchAttempt("YF", t, "TOO_SHORT", note=f"rows={len(df)}")
+        return None, FetchAttempt("YF", ",".join(tickers), "EMPTY", note="no data")
     except Exception as e:
-        return None, FetchAttempt("YF", "EXC", note=str(e))
+        return None, FetchAttempt("YF", code, "EXC", note=str(e))
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def fetch_stooq(code: str, period_days: int) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
-    code = _as_str_ticker(code)
-
+def fetch_stooq(code: str, days: int) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
+    # Stooq 台股常見格式：xxxx.tw / xxxx.t
+    # 我們用 requests 抓 CSV，比較穩
     try:
-        if DEPENDENCIES.get("pandas_datareader", False) and pdr is not None:
-            ticker = code.lower()
+        cands = []
+        if code.isdigit():
+            # stooq 常見：2330.tw
+            cands = [f"{code}.tw"]
+        else:
+            cands = [code]
 
-            def _do():
-                return pdr.DataReader(ticker, "stooq")
+        for sym in cands:
+            url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
+            r, err = _http_get_retry(url, retries=3)
+            if r is None:
+                return None, FetchAttempt("STOOQ", url, "EXC", note=err)
+            txt = r.text or ""
+            if _is_html_like(txt):
+                return None, FetchAttempt("STOOQ", url, "WAF_HTML", status_code=r.status_code, note="HTML/WAF")
+            if len(txt.strip()) < 60:
+                return None, FetchAttempt("STOOQ", url, "EMPTY", status_code=r.status_code, note="too short")
 
-            df = _retry(_do, times=3, sleep=0.8)
-            if df is None or len(df) == 0:
-                return None, FetchAttempt("STOOQ", "EMPTY", note="stooq 回傳空資料")
-
-            df = df.reset_index().rename(columns={
-                "Date": "Date",
-                "Open": "Open",
-                "High": "High",
-                "Low": "Low",
-                "Close": "Close",
-                "Volume": "Volume",
-            })
+            df = pd.read_csv(io.StringIO(txt))
+            # columns: Date, Open, High, Low, Close, Volume
+            if not set(["Date", "Open", "High", "Low", "Close"]).issubset(df.columns):
+                return None, FetchAttempt("STOOQ", url, "EMPTY", status_code=r.status_code, note="unexpected columns")
+            df = df.tail(max(days, 120) + 30)
             df = _normalize_ohlcv(df)
-            if len(df) >= 10:
-                return df, FetchAttempt("STOOQ", "OK", note=f"rows={len(df)}")
-            return None, FetchAttempt("STOOQ", "TOO_SHORT", note=f"rows={len(df)}")
-
-        return None, FetchAttempt("STOOQ", "NO_PDR", note="缺少 pandas_datareader 或 stooq 不支援該代號")
+            if len(df) < 30:
+                return None, FetchAttempt("STOOQ", url, "TOO_SHORT", status_code=r.status_code, note=f"rows={len(df)}")
+            return df, FetchAttempt("STOOQ", url, "OK", status_code=r.status_code, note=f"rows={len(df)}")
+        return None, FetchAttempt("STOOQ", "", "EMPTY", note="no symbol")
     except Exception as e:
-        return None, FetchAttempt("STOOQ", "EXC", note=str(e))
+        return None, FetchAttempt("STOOQ", "", "EXC", note=str(e))
 
 
-def _load_csv_fallback(file) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
+def _load_csv_fallback(uploaded_file) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
     try:
-        if file is None:
-            return None, FetchAttempt("CSV_UPLOAD", "NO_FILE")
+        if uploaded_file is None:
+            return None, FetchAttempt("CSV_UPLOAD", "", "EMPTY", note="no upload")
+        df = pd.read_csv(uploaded_file)
+        # 支援常見欄位大小寫
+        cols = {c.lower(): c for c in df.columns}
+        # 必要欄位
+        need = ["date", "open", "high", "low", "close"]
+        if not all(n in cols for n in need):
+            return None, FetchAttempt("CSV_UPLOAD", "", "EMPTY", note="CSV 欄位需包含 Date/Open/High/Low/Close/Volume(可選)")
 
-        df = pd.read_csv(file)
+        ren = {
+            cols["date"]: "Date",
+            cols["open"]: "Open",
+            cols["high"]: "High",
+            cols["low"]: "Low",
+            cols["close"]: "Close",
+        }
+        if "volume" in cols:
+            ren[cols["volume"]] = "Volume"
+        else:
+            df["Volume"] = np.nan
+            ren["Volume"] = "Volume"
+
+        df = df.rename(columns=ren)
+        df = df[["Date", "Open", "High", "Low", "Close", "Volume"]]
         df = _normalize_ohlcv(df)
-        if df is None or len(df) < 10:
-            return None, FetchAttempt("CSV_UPLOAD", "TOO_SHORT", note=f"rows={0 if df is None else len(df)}")
-        return df, FetchAttempt("CSV_UPLOAD", "OK", note=f"rows={len(df)}")
+        if len(df) < 30:
+            return None, FetchAttempt("CSV_UPLOAD", "", "TOO_SHORT", note=f"rows={len(df)}（至少 30 根日K）")
+        return df, FetchAttempt("CSV_UPLOAD", "", "OK", note=f"rows={len(df)}")
     except Exception as e:
-        return None, FetchAttempt("CSV_UPLOAD", "EXC", note=str(e))
+        return None, FetchAttempt("CSV_UPLOAD", "", "EXC", note=str(e))
 
 
-def fetch_ohlcv_multi(code: str, months_back: int, csv_upload=None) -> Tuple[Optional[pd.DataFrame], str, List[FetchAttempt]]:
-    code = _as_str_ticker(code)
+def fetch_ohlcv_multi(code: str, months_back: int, finmind_token: str, csv_upload=None) -> Tuple[Optional[pd.DataFrame], str, List[FetchAttempt]]:
+    days = int(months_back * 31)
     attempts: List[FetchAttempt] = []
-    period_days = int(max(2, months_back) * 31)
 
-    # 2026 推薦順序：FinMind → yfinance → Stooq → CSV
-    df, att = fetch_finmind(code, months_back)
+    # 1) FinMind（可選）
+    df, att = fetch_finmind(code, months_back, finmind_token.strip())
     attempts.append(att)
-    if df is not None and len(df) >= 30:
+    if df is not None:
         return df, "FinMind", attempts
 
-    df, att = fetch_yfinance(code, period_days)
+    # 2) yfinance
+    df, att = fetch_yfinance(code, days)
     attempts.append(att)
-    if df is not None and len(df) >= 30:
+    if df is not None:
         return df, "YF", attempts
 
-    df, att = fetch_stooq(code, period_days)
+    # 3) Stooq
+    df, att = fetch_stooq(code, days)
     attempts.append(att)
-    if df is not None and len(df) >= 30:
+    if df is not None:
         return df, "STOOQ", attempts
 
+    # 4) CSV upload
     if csv_upload is not None:
         df, att = _load_csv_fallback(csv_upload)
         attempts.append(att)
-        if df is not None and len(df) >= 30:
+        if df is not None:
             return df, "CSV_UPLOAD", attempts
 
     return None, "NONE", attempts
 
 
-# -----------------------------
-# Indicators
-# -----------------------------
-def ema(series: pd.Series, span: int) -> pd.Series:
-    return series.ewm(span=span, adjust=False).mean()
-
-
-def sma(series: pd.Series, window: int) -> pd.Series:
-    return series.rolling(window).mean()
-
+# ----------------------------
+# Indicators & Signals
+# ----------------------------
+def ema(s: pd.Series, span: int) -> pd.Series:
+    return s.ewm(span=span, adjust=False).mean()
 
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
     delta = close.diff()
-    gain = delta.where(delta > 0, 0.0)
-    loss = (-delta).where(delta < 0, 0.0)
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-    rs = avg_gain / (avg_loss.replace(0, np.nan))
-    out = 100 - (100 / (1 + rs))
-    return out.bfill()
-
+    gain = (delta.where(delta > 0, 0.0)).rolling(period).mean()
+    loss = (-delta.where(delta < 0, 0.0)).rolling(period).mean()
+    rs = gain / (loss.replace(0, np.nan))
+    return 100 - (100 / (1 + rs))
 
 def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[pd.Series, pd.Series, pd.Series]:
     m_fast = ema(close, fast)
@@ -383,561 +330,415 @@ def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> T
     hist = line - sig
     return line, sig, hist
 
+def bollinger(close: pd.Series, n: int = 20, k: float = 2.0) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+    mid = close.rolling(n).mean()
+    std = close.rolling(n).std(ddof=0)
+    up = mid + k * std
+    lo = mid - k * std
+    z = (close - mid) / std.replace(0, np.nan)
+    return mid, up, lo, z
 
-def stochastic_kd(high: pd.Series, low: pd.Series, close: pd.Series, k: int = 14, d: int = 3) -> Tuple[pd.Series, pd.Series]:
-    ll = low.rolling(k).min()
-    hh = high.rolling(k).max()
-    k_line = 100 * (close - ll) / (hh - ll).replace(0, np.nan)
-    d_line = k_line.rolling(d).mean()
-    return k_line.bfill(), d_line.bfill()
-
-
-def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    high = df["High"]
+    low = df["Low"]
+    close = df["Close"]
     prev_close = close.shift(1)
     tr = pd.concat([
-        (high - low).abs(),
+        (high - low),
         (high - prev_close).abs(),
         (low - prev_close).abs(),
     ], axis=1).max(axis=1)
-    return tr.rolling(period).mean().bfill()
+    return tr.rolling(period).mean()
 
+def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["EMA20"] = ema(out["Close"], 20)
+    out["EMA60"] = ema(out["Close"], 60)
+    out["RSI14"] = rsi(out["Close"], 14)
+    m_line, m_sig, m_hist = macd(out["Close"])
+    out["MACD"] = m_line
+    out["MACD_SIG"] = m_sig
+    out["MACD_HIST"] = m_hist
+    mid, up, lo, z = bollinger(out["Close"], 20, 2.0)
+    out["BB_MID"] = mid
+    out["BB_UP"] = up
+    out["BB_LO"] = lo
+    out["BB_Z"] = z
+    out["ATR14"] = atr(out, 14)
+    out["VOL_MA20"] = out["Volume"].rolling(20).mean()
+    return out
 
-def bollinger(close: pd.Series, window: int = 20, n_std: float = 2.0) -> Tuple[pd.Series, pd.Series, pd.Series]:
-    mid = sma(close, window)
-    sd = close.rolling(window).std()
-    upper = mid + n_std * sd
-    lower = mid - n_std * sd
-    return mid, upper, lower
-
-
-def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    c = df["Close"]
-
-    df["SMA20"] = sma(c, 20)
-    df["EMA20"] = ema(c, 20)
-    df["SMA60"] = sma(c, 60)
-    df["RSI14"] = rsi(c, 14)
-
-    macd_line, macd_sig, macd_hist = macd(c, 12, 26, 9)
-    df["MACD"] = macd_line
-    df["MACD_SIG"] = macd_sig
-    df["MACD_HIST"] = macd_hist
-
-    k, d = stochastic_kd(df["High"], df["Low"], c, 14, 3)
-    df["K"] = k
-    df["D"] = d
-
-    df["ATR14"] = atr(df["High"], df["Low"], c, 14)
-
-    mid, up, lo = bollinger(c, 20, 2.0)
-    df["BB_MID"] = mid
-    df["BB_UP"] = up
-    df["BB_LO"] = lo
-
-    # Volume signals
-    vol = df["Volume"].fillna(0)
-    df["VOL_SMA20"] = vol.rolling(20).mean()
-    vol_std = vol.rolling(20).std().replace(0, np.nan)
-    df["VOL_Z20"] = ((vol - df["VOL_SMA20"]) / vol_std).replace([np.inf, -np.inf], np.nan).fillna(0)
-
-    return df
-
-
-# -----------------------------
-# Scoring & Signals
-# -----------------------------
-def resonance_score(latest: pd.Series) -> Tuple[int, Dict[str, Any]]:
-    """0-100 共振分數（偏可操作 / 偏順勢）"""
-    score = 50.0
-    details: Dict[str, Any] = {}
-
-    close = _safe_float(latest.get("Close"))
-    sma20 = _safe_float(latest.get("SMA20"))
-    ema20 = _safe_float(latest.get("EMA20"))
-    sma60 = _safe_float(latest.get("SMA60"))
-    rsi14 = _safe_float(latest.get("RSI14"))
-    macd_h = _safe_float(latest.get("MACD_HIST"))
-    k = _safe_float(latest.get("K"))
-    d = _safe_float(latest.get("D"))
-    bb_up = _safe_float(latest.get("BB_UP"))
-    bb_lo = _safe_float(latest.get("BB_LO"))
-    volz = _safe_float(latest.get("VOL_Z20"))
-
-    # Trend
-    if not np.isnan(sma20) and not np.isnan(sma60):
-        if sma20 > sma60:
-            score += 8
-            details["trend"] = "up"
-        elif sma20 < sma60:
-            score -= 6
-            details["trend"] = "down"
-        else:
-            details["trend"] = "flat"
-
-    # Price vs EMA/SMA
-    if not np.isnan(ema20) and close > ema20:
-        score += 6
-    elif not np.isnan(ema20) and close < ema20:
-        score -= 4
-
-    if not np.isnan(sma20) and close > sma20:
-        score += 4
-    elif not np.isnan(sma20) and close < sma20:
-        score -= 3
-
-    # RSI
-    if not np.isnan(rsi14):
-        if rsi14 >= 70:
-            score -= 4
-            details["rsi_zone"] = "overbought"
-        elif rsi14 <= 30:
-            score += 6
-            details["rsi_zone"] = "oversold"
-        else:
-            details["rsi_zone"] = "neutral"
-
-    # MACD
-    if not np.isnan(macd_h):
-        score += 6 if macd_h > 0 else -4
-
-    # KD
-    if not np.isnan(k) and not np.isnan(d):
-        score += 3 if k > d else -2
-
-    # Bollinger position
-    if (not np.isnan(bb_up)) and (not np.isnan(bb_lo)) and (bb_up > bb_lo):
-        pos = (close - bb_lo) / (bb_up - bb_lo)
-        details["bb_pos"] = float(pos)
-        if pos < 0.15:
-            score += 6
-        elif pos > 0.85:
-            score -= 4
-
-    # Volume
-    if not np.isnan(volz):
-        if volz >= 1.2:
-            score += 6
-            details["volume"] = "impulse"
-        elif volz <= -0.8:
-            score -= 1
-            details["volume"] = "quiet"
-        else:
-            details["volume"] = "normal"
-
-    score = float(np.clip(score, 0, 100))
-    return int(round(score)), details
-
-
-def determine_action(df: pd.DataFrame, strategy: str, params: Dict[str, float]) -> Tuple[str, str]:
-    """Return (action, reason): BUY / SELL / WATCH"""
-    latest = df.iloc[-1]
-    prev = df.iloc[-2] if len(df) >= 2 else latest
-
-    close = float(latest["Close"])
+def classify_action(latest: pd.Series, max_buy_distance: float = 0.12) -> Tuple[str, str]:
+    """
+    回傳 (action, reason)
+    action: BUY / SELL / WATCH
+    """
+    px = float(latest["Close"])
     ema20 = float(latest.get("EMA20", np.nan))
-    sma20 = float(latest.get("SMA20", np.nan))
-    sma60 = float(latest.get("SMA60", np.nan))
-    rsi14 = float(latest.get("RSI14", np.nan))
-    macd_h = float(latest.get("MACD_HIST", np.nan))
-    k = float(latest.get("K", np.nan))
-    d = float(latest.get("D", np.nan))
-    bb_up = float(latest.get("BB_UP", np.nan))
-    bb_lo = float(latest.get("BB_LO", np.nan))
-    atr14 = float(latest.get("ATR14", np.nan))
-    volz = float(latest.get("VOL_Z20", 0))
+    ema60 = float(latest.get("EMA60", np.nan))
+    r = float(latest.get("RSI14", np.nan))
+    hist = float(latest.get("MACD_HIST", np.nan))
+    bbz = float(latest.get("BB_Z", np.nan))
+    bblo = float(latest.get("BB_LO", np.nan))
+    bbup = float(latest.get("BB_UP", np.nan))
 
-    trend_up = (not np.isnan(sma20) and not np.isnan(sma60) and sma20 > sma60)
-    above_ema = (not np.isnan(ema20) and close > ema20)
-    macd_pos = (not np.isnan(macd_h) and macd_h > 0)
-    kd_bull = (not np.isnan(k) and not np.isnan(d) and k > d)
+    # 近端買點：靠近下軌或 -1.5σ以下 + RSI偏低 + MACD動能回升
+    near_buy = (px <= bblo * (1 + max_buy_distance)) and (bbz <= -1.2) and (r <= 45)
+    # 近端賣點：靠近上軌或 +1.5σ以上 + RSI偏高 + MACD動能轉弱
+    near_sell = (px >= bbup * (1 - 0.02)) and (bbz >= 1.2) and (r >= 55)
 
-    if strategy == "pullback":
-        near_bb_lo = (not np.isnan(bb_lo) and close <= bb_lo * (1 + 0.01))
-        near_ema = (not np.isnan(ema20) and abs((close - ema20) / ema20) <= 0.02)
-        oversold = (not np.isnan(rsi14) and rsi14 <= 35)
-        turning = (macd_h > float(prev.get("MACD_HIST", macd_h))) or kd_bull
+    # 趨勢濾網
+    trend_up = (not math.isnan(ema20)) and (not math.isnan(ema60)) and (ema20 >= ema60)
+    trend_dn = (not math.isnan(ema20)) and (not math.isnan(ema60)) and (ema20 < ema60)
 
-        if (near_bb_lo or near_ema) and (oversold or turning):
-            return "BUY", "回檔接近支撐（布林下緣/EMA20）且出現指標翻揚跡象"
+    if near_buy and trend_up and hist > 0:
+        return "BUY", "趨勢偏多，價格落在布林下緣/負σ區，且動能回升（MACD_HIST>0）"
+    if near_sell and trend_dn and hist < 0:
+        return "SELL", "趨勢偏空，價格貼近布林上緣/正σ區，且動能轉弱（MACD_HIST<0）"
 
-        near_bb_up = (not np.isnan(bb_up) and close >= bb_up * (1 - 0.005))
-        overbought = (not np.isnan(rsi14) and rsi14 >= 70)
-        weakening = (macd_h < float(prev.get("MACD_HIST", macd_h))) or (not kd_bull)
-        if near_bb_up and (overbought or weakening):
-            return "SELL", "接近壓力（布林上緣）且指標偏過熱/轉弱"
+    # 若接近買點但未觸發：WATCH
+    if px <= (bblo * (1 + max_buy_distance)):
+        return "WATCH", "接近下緣區但條件未完整共振（等待 RSI/MACD 確認）"
+    if px >= (bbup * (1 - 0.02)):
+        return "WATCH", "接近上緣區但條件未完整共振（等待 RSI/MACD 確認）"
 
-        return "WATCH", "條件尚未明確，等待價格進入區間或指標翻轉"
+    return "WATCH", "條件尚未明確，等待價格進入區間或指標翻轉"
 
-    # breakout
-    max_chase = float(params.get("max_chase_distance", 0.06))
-    atr_buffer = float(params.get("breakout_atr_buffer", 0.20))
+def make_future_zones(latest: pd.Series, max_buy_distance: float = 0.12) -> Dict[str, Dict[str, float]]:
+    """
+    用布林通道 + σ 概念給出「近端/深回檔」買點、以及「近端/延伸」賣點區間
+    """
+    mid = float(latest.get("BB_MID", np.nan))
+    up = float(latest.get("BB_UP", np.nan))
+    lo = float(latest.get("BB_LO", np.nan))
+    std = (up - mid) / 2.0 if (not math.isnan(up) and not math.isnan(mid)) else np.nan
+    px = float(latest["Close"])
 
-    lookback = 20
-    if len(df) < lookback + 2:
-        return "WATCH", "資料筆數不足以判定突破條件"
+    # 區間設計：更貼近實務（避免離現價太遠）
+    # 近端買：下軌到下軌+0.5σ
+    near_buy_lo = lo
+    near_buy_hi = lo + 0.5 * std if not math.isnan(std) else lo * (1 + 0.02)
 
-    prev_high = df["High"].rolling(lookback).max().iloc[-2]
-    trigger = prev_high + (atr_buffer * atr14 if not np.isnan(atr14) else 0)
-    dist = (close - trigger) / trigger if trigger else 0
+    # 深回檔買：下軌 -0.5σ 到 下軌（更深）
+    deep_buy_lo = lo - 0.6 * std if not math.isnan(std) else lo * (1 - 0.05)
+    deep_buy_hi = lo
 
-    confirm = trend_up and above_ema and macd_pos and (volz >= 0.6)
+    # 近端賣：上軌-0.5σ 到 上軌
+    near_sell_lo = up - 0.5 * std if not math.isnan(std) else up * (1 - 0.02)
+    near_sell_hi = up
 
-    if close >= trigger and dist <= max_chase and confirm:
-        return "BUY", f"突破成立（站上近{lookback}日高點+ATR緩衝）且量價/趨勢/動能同步"
+    # 延伸賣：上軌到上軌+0.7σ
+    ext_sell_lo = up
+    ext_sell_hi = up + 0.7 * std if not math.isnan(std) else up * (1 + 0.03)
 
-    if close < (ema20 if not np.isnan(ema20) else close) and close < trigger:
-        return "SELL", "突破失效（跌回EMA20且低於突破位），偏向風控撤退"
+    def dist_pct(a: float) -> float:
+        return (a / px - 1.0) * 100.0
 
-    return "WATCH", "突破型：尚未滿足『突破+確認+追價距離』三條件"
-
-
-def estimate_zones(df: pd.DataFrame, max_buy_distance: float) -> Dict[str, Any]:
-    """提供專業買賣區間（避免買點離現價太遠）"""
-    latest = df.iloc[-1]
-    close = float(latest["Close"])
-    atr14 = float(latest.get("ATR14", np.nan))
-    bb_lo = float(latest.get("BB_LO", np.nan))
-    bb_up = float(latest.get("BB_UP", np.nan))
-    bb_mid = float(latest.get("BB_MID", np.nan))
-    ema20 = float(latest.get("EMA20", np.nan))
-
-    sup = df["Low"].rolling(20).min().iloc[-1]
-    res = df["High"].rolling(20).max().iloc[-1]
-
-    if np.isnan(atr14):
-        atr14 = max(0.001, close * 0.02)
-
-    base_lo = min(
-        bb_lo if not np.isnan(bb_lo) else close - 1.2 * atr14,
-        ema20 if not np.isnan(ema20) else close - 1.0 * atr14,
-        bb_mid if not np.isnan(bb_mid) else close - 0.8 * atr14,
-    )
-    base_hi = min(
-        ema20 if not np.isnan(ema20) else close - 0.5 * atr14,
-        bb_mid if not np.isnan(bb_mid) else close - 0.3 * atr14,
-        close,
-    )
-
-    z1_lo = min(base_lo, base_hi)
-    z1_hi = max(base_lo, base_hi)
-
-    min_price_allowed = close * (1 - max_buy_distance)
-    z1_lo = max(z1_lo, min_price_allowed)
-    z1_hi = max(min(z1_hi, close), z1_lo)
-
-    z2_center = float(sup)
-    z2_lo = max(0.01, z2_center - 0.8 * atr14)
-    z2_hi = z2_center + 0.5 * atr14
-
-    tp_base = max(res * 0.98, (bb_up * 0.985) if not np.isnan(bb_up) else res * 0.98)
-    z3_lo = tp_base
-    z3_hi = tp_base + 0.8 * atr14
-
-    def _dist(target: float) -> float:
-        return (target - close) / close if close else np.nan
-
-    d1 = _dist((z1_lo + z1_hi) / 2)
-    d2 = _dist((z2_lo + z2_hi) / 2)
-    d3 = _dist((z3_lo + z3_hi) / 2)
-
-    return {
-        "close": close,
-        "action_buy_zone": (float(z1_lo), float(z1_hi), float(d1), _human_pct(d1)),
-        "deep_buy_zone": (float(z2_lo), float(z2_hi), float(d2), _human_pct(d2)),
-        "sell_zone": (float(z3_lo), float(z3_hi), float(d3), _human_pct(d3)),
-        "support": float(sup),
-        "resistance": float(res),
-        "atr": float(atr14),
-        "bb_lo": float(bb_lo) if not np.isnan(bb_lo) else np.nan,
-        "bb_up": float(bb_up) if not np.isnan(bb_up) else np.nan,
+    zones = {
+        "near_buy": {"lo": near_buy_lo, "hi": near_buy_hi, "dist_lo_pct": dist_pct(near_buy_lo), "dist_hi_pct": dist_pct(near_buy_hi)},
+        "deep_buy": {"lo": deep_buy_lo, "hi": deep_buy_hi, "dist_lo_pct": dist_pct(deep_buy_lo), "dist_hi_pct": dist_pct(deep_buy_hi)},
+        "near_sell": {"lo": near_sell_lo, "hi": near_sell_hi, "dist_lo_pct": dist_pct(near_sell_lo), "dist_hi_pct": dist_pct(near_sell_hi)},
+        "ext_sell": {"lo": ext_sell_lo, "hi": ext_sell_hi, "dist_lo_pct": dist_pct(ext_sell_lo), "dist_hi_pct": dist_pct(ext_sell_hi)},
     }
+    return zones
 
 
-# -----------------------------
-# Plot (Matplotlib)
-# -----------------------------
-def plot_bollinger(df: pd.DataFrame, title: str, marks: Optional[List[Tuple[pd.Timestamp, float, str]]] = None):
-    x = df["Date"]
-    c = df["Close"]
+def compute_ai_score(latest: pd.Series) -> int:
+    score = 50
+    r = float(latest.get("RSI14", np.nan))
+    hist = float(latest.get("MACD_HIST", np.nan))
+    z = float(latest.get("BB_Z", np.nan))
+    ema20 = float(latest.get("EMA20", np.nan))
+    ema60 = float(latest.get("EMA60", np.nan))
+    vol = float(latest.get("Volume", np.nan))
+    vma = float(latest.get("VOL_MA20", np.nan))
 
+    if not math.isnan(ema20) and not math.isnan(ema60):
+        score += 10 if ema20 >= ema60 else -10
+    if not math.isnan(hist):
+        score += 8 if hist > 0 else -8
+    if not math.isnan(r):
+        if r < 35:
+            score += 6
+        elif r > 70:
+            score -= 6
+    if not math.isnan(z):
+        if z < -1.5:
+            score += 6
+        elif z > 1.5:
+            score -= 6
+    if not math.isnan(vol) and not math.isnan(vma) and vma > 0:
+        score += 6 if (vol / vma) > 1.2 else 0
+
+    return int(max(0, min(100, score)))
+
+
+def plot_bollinger(df: pd.DataFrame, code: str):
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(x, c, label="Close")
-
-    for col, lab in [("BB_UP", "BB Upper"), ("BB_MID", "BB Mid"), ("BB_LO", "BB Lower"), ("SMA20", "SMA20"), ("EMA20", "EMA20")]:
-        if col in df.columns:
-            ax.plot(x, df[col], label=lab)
-
-    if "BB_LO" in df.columns and "BB_UP" in df.columns:
-        ax.fill_between(x, df["BB_LO"], df["BB_UP"], alpha=0.10)
-
-    if marks:
-        for d, p, lab in marks:
-            ax.scatter([d], [p], s=60)
-            ax.annotate(lab, (d, p), xytext=(5, 8), textcoords="offset points")
-
-    ax.set_title(title)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", fontsize=9)
+    ax.plot(df.index, df["Close"], label="Close")
+    ax.plot(df.index, df["BB_MID"], label="BB Mid")
+    ax.plot(df.index, df["BB_UP"], label="BB Upper")
+    ax.plot(df.index, df["BB_LO"], label="BB Lower")
+    ax.fill_between(df.index, df["BB_LO"].values, df["BB_UP"].values, alpha=0.1)
+    ax.set_title(f"{code} - Bollinger Bands (20,2)")
+    ax.grid(True, alpha=0.2)
+    ax.legend()
     st.pyplot(fig, clear_figure=True)
 
 
-# -----------------------------
+# ----------------------------
+# Sidebar UI
+# ----------------------------
+with st.sidebar:
+    st.markdown("## 設定")
+    mode = st.radio("選擇模式", ["單一股票分析", "Top 10 掃描器"], index=0)
+
+    months_label = st.selectbox("資料期間", ["3mo", "6mo", "12mo", "24mo"], index=1)
+    months_back = {"3mo": 3, "6mo": 6, "12mo": 12, "24mo": 24}[months_label]
+
+    show_debug = st.checkbox("顯示下載除錯資訊（Debug）", value=False)
+
+    st.markdown("---")
+    st.markdown("## ⚙️ 系統狀態 / 套件")
+    for pkg, ok in DEPENDENCIES.items():
+        if ok:
+            st.success(f"✅ {pkg}")
+        else:
+            st.error(f"❌ {pkg} 缺失（見下方 requirements.txt）")
+
+    st.markdown("---")
+    st.markdown("## 🔑 FinMind（可選）")
+    finmind_token = st.text_input("FinMind Token（可留空，不影響使用）", type="password", value="")
+    if DEPENDENCIES.get("finmind", False) and finmind_token.strip() == "":
+        st.info("FinMind 已安裝，但你未輸入 Token → 會自動跳過 FinMind，改用 yfinance / Stooq / CSV")
+    if (not DEPENDENCIES.get("finmind", False)) and finmind_token.strip():
+        st.warning("你輸入了 Token，但 FinMind 未安裝 → 請在 requirements.txt 加入 FinMind")
+
+    st.markdown("---")
+    st.markdown("## A+B+C：專業買賣點 / 風險報酬")
+    max_buy_distance = st.slider("可操作買點最大距離（避免買點離現實太遠）max_buy_distance", 0.02, 0.20, 0.12, 0.01)
+
+    st.markdown("---")
+    net_test = st.button("🧪 網路測試（建議先按一次）")
+
+# ----------------------------
+# Main UI
+# ----------------------------
+st.markdown(f"# {TITLE}")
+st.caption(SUBTITLE)
+
+colA, colB = st.columns([2, 3])
+
+with colA:
+    code = st.text_input("請輸入股票代號", value="2330" if mode == "Top 10 掃描器" else "6274").strip()
+
+with colB:
+    st.info("💡 若 Cloud 偶發抓不到資料：\n- 先按左側「網路測試」\n- 或直接上傳 export.csv（Date/Open/High/Low/Close/Volume）立即可用")
+
+csv_upload = st.file_uploader("（選用）上傳 export.csv 作為備援資料源", type=["csv"])
+
+if net_test:
+    test_urls = [
+        "https://stooq.com",
+        "https://query1.finance.yahoo.com/v7/finance/quote?symbols=2330.TW",
+    ]
+    rows = []
+    for u in test_urls:
+        r, err = _http_get_retry(u, retries=2, timeout=10)
+        if r is None:
+            rows.append([u, "FAIL", "", err[:120]])
+        else:
+            rows.append([u, "OK", r.status_code, (r.text[:60].replace("\n", " ") if r.text else "")])
+    st.subheader("🧪 網路測試結果")
+    st.dataframe(pd.DataFrame(rows, columns=["url", "result", "status", "snippet"]))
+
+# ----------------------------
+# Single Stock Analysis
+# ----------------------------
+def render_single(code: str):
+    df, src, attempts = fetch_ohlcv_multi(code, months_back, finmind_token, csv_upload)
+
+    if df is None:
+        st.error("❌ 無法取得資料（所有備援來源都失敗）。請稍後再試，或改用 CSV 上傳備援。")
+        if show_debug:
+            st.subheader("🧩 逐路診斷（哪一路失敗、為什麼）")
+            st.dataframe(pd.DataFrame([a.__dict__ for a in attempts]))
+        return
+
+    df = compute_indicators(df)
+    latest = df.iloc[-1]
+    px = float(latest["Close"])
+    score = compute_ai_score(latest)
+    action, reason = classify_action(latest, max_buy_distance=max_buy_distance)
+    zones = make_future_zones(latest, max_buy_distance=max_buy_distance)
+
+    # Summary cards
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("目前價格", f"{px:.2f}")
+    c2.metric("AI 共振分數", f"{score}/100")
+    c3.metric("資料來源", src)
+    c4.metric("最後日期 / 筆數", f"{df.index[-1].date()} / {len(df)}")
+
+    st.markdown("## 📌 當下是否為買點/賣點？（可操作判斷）")
+    if action == "BUY":
+        st.success(f"🟢 BUY：{reason}")
+    elif action == "SELL":
+        st.error(f"🔴 SELL：{reason}")
+    else:
+        st.info(f"🟡 WATCH：{reason}")
+
+    # Professional distance description
+    st.markdown("## 🗺️ 未來預估買賣點（區間 + 距離 + σ 語彙）")
+
+    def zone_card(title: str, z: Dict[str, float], color: str, note: str):
+        lo, hi = z["lo"], z["hi"]
+        dlo, dhi = z["dist_lo_pct"], z["dist_hi_pct"]
+        st.markdown(
+            f"""
+<div style="padding:14px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:{color};">
+<b>{title}</b><br/>
+區間： <b>{lo:.2f} ~ {hi:.2f}</b><br/>
+相對現價： <b>{dlo:+.1f}% ~ {dhi:+.1f}%</b>（以現價為基準的位移）<br/>
+說明： {note}
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    zone_card(
+        "🟢 近端買點（可操作）",
+        zones["near_buy"],
+        "rgba(0,120,60,0.25)",
+        "偏向「回檔承接」：靠近布林下緣與負σ區，屬於較貼近現價的進場帶。"
+    )
+    zone_card(
+        "🟦 深回檔買點（等待型）",
+        zones["deep_buy"],
+        "rgba(0,120,255,0.18)",
+        "偏向「極端回檔」：需更深回落才出現，通常搭配恐慌/急跌情境，較不常觸發。"
+    )
+    zone_card(
+        "🟡 近端賣點（壓力/獲利）",
+        zones["near_sell"],
+        "rgba(255,180,0,0.18)",
+        "偏向「壓力帶」：接近布林上緣與正σ區，常見獲利了結或遇壓震盪。"
+    )
+    zone_card(
+        "🔴 延伸賣點（突破延伸）",
+        zones["ext_sell"],
+        "rgba(255,0,0,0.12)",
+        "偏向「趨勢延伸」：若放量突破上緣，可能走延伸段，此區間偏向追蹤停利/分批減碼。"
+    )
+
+    st.markdown("## 📈 布林通道走勢圖（專業視覺判讀）")
+    plot_bollinger(df, code)
+
+    if show_debug:
+        st.markdown("## 🧩 逐路診斷（哪一路成功/失敗）")
+        st.dataframe(pd.DataFrame([a.__dict__ for a in attempts]))
+
+    st.markdown("## 📊 指標摘要（最新一筆）")
+    show_cols = ["Close", "EMA20", "EMA60", "RSI14", "MACD", "MACD_SIG", "MACD_HIST", "BB_MID", "BB_UP", "BB_LO", "BB_Z", "ATR14"]
+    st.dataframe(pd.DataFrame(latest[show_cols]).T)
+
+
+# ----------------------------
 # Top10 Scanner
-# -----------------------------
-DEFAULT_POOL_SMALL = [
-    "2330", "2317", "2454", "2308", "2412", "2881", "2882", "2891", "2603", "2609",
-    "3037", "3711", "2382", "2303", "1301", "1303", "1101", "1216", "3008", "3443",
-    "4967", "8046", "6274", "6488", "6643", "3533", "6669"
+# ----------------------------
+DEFAULT_POOL = [
+    # 大型與常用測試池（可自行增減）
+    "2330", "2317", "2454", "2308", "2412", "6505", "2881", "2882", "2891",
+    "2603", "2609", "2615", "3037", "2382", "2303", "3711", "2327",
+    "3008", "2002", "1301", "1303", "1101", "1216", "5880", "2886",
+    "8046", "4967", "6274", "9910", "3231"
 ]
 
+def render_top10():
+    st.markdown("## 🔥 AI 強勢股 Top 10（去重 / 顯示可操作判斷）")
+    st.caption("Top10 建議先用小池測試（避免 Cloud 超時）。你也可以在下方貼上自訂股票清單。")
 
-def _unique_codes(codes: List[str]) -> List[str]:
+    custom = st.text_area("（選用）自訂股票清單（用逗號或換行分隔，例如：2330,2317,2454）", value="")
+    if custom.strip():
+        raw = custom.replace(",", "\n").splitlines()
+        pool = [x.strip() for x in raw if x.strip()]
+    else:
+        pool = DEFAULT_POOL
+
+    # 去重 + 只留數字代號
+    uniq = []
     seen = set()
-    out: List[str] = []
-    for c in codes:
-        c = _as_str_ticker(c)
-        if not c:
+    for x in pool:
+        x = x.strip()
+        if not x:
             continue
-        if c in seen:
+        if x in seen:
             continue
-        seen.add(c)
-        out.append(c)
-    return out
+        seen.add(x)
+        uniq.append(x)
 
+    limit = st.slider("掃描數量上限（避免超時）", 10, 60, 25, 5)
 
-def scan_top10(codes: List[str], months_back: int, max_buy_distance: float, strategy: str, params: Dict[str, float]) -> pd.DataFrame:
     rows = []
-    codes = _unique_codes(codes)
+    diag_rows = []
 
-    for code in codes:
-        df, src, _attempts = fetch_ohlcv_multi(code, months_back, csv_upload=None)
-        if df is None or len(df) < 60:
+    for code in uniq[:limit]:
+        df, src, attempts = fetch_ohlcv_multi(code, months_back, finmind_token, csv_upload)
+        if df is None:
+            diag_rows.append({"code": code, "ok": False, "src": "NONE", "note": "all failed"})
             continue
+        df = compute_indicators(df)
+        latest = df.iloc[-1]
+        px = float(latest["Close"])
+        score = compute_ai_score(latest)
+        action, reason = classify_action(latest, max_buy_distance=max_buy_distance)
+        zones = make_future_zones(latest, max_buy_distance=max_buy_distance)
 
-        df = add_indicators(df)
-        score, _details = resonance_score(df.iloc[-1])
-        action, reason = determine_action(df, strategy, params)
-        zones = estimate_zones(df, max_buy_distance)
-
-        close = float(df.iloc[-1]["Close"])
-        buy_lo, buy_hi, d1, _d1s = zones["action_buy_zone"]
-
-        # professional distance label
-        if np.isnan(d1):
-            dist_label = "N/A"
-        else:
-            dist_label = f"{abs(d1)*100:.1f}% {'回檔空間' if d1 < 0 else '上行空間'}"
+        # 顯示「最貼近的可操作帶」：近端買 or 近端賣
+        nb = zones["near_buy"]
+        ns = zones["near_sell"]
+        nb_mid = (nb["lo"] + nb["hi"]) / 2
+        ns_mid = (ns["lo"] + ns["hi"]) / 2
+        nb_dist = abs((nb_mid / px) - 1)
+        ns_dist = abs((ns_mid / px) - 1)
+        closest = "NearBuy" if nb_dist <= ns_dist else "NearSell"
+        closest_band = nb if closest == "NearBuy" else ns
 
         rows.append({
             "股票": code,
             "來源": src,
             "AI分數": score,
+            "目前價": round(px, 2),
             "當下判斷": action,
-            "可操作買區": f"{buy_lo:.2f} ~ {buy_hi:.2f}",
-            "相對現價偏離": dist_label,
-            "摘要理由": reason,
+            "可操作帶": "近端買" if closest == "NearBuy" else "近端賣",
+            "帶區間": f"{closest_band['lo']:.2f} ~ {closest_band['hi']:.2f}",
+            "相對現價": f"{closest_band['dist_lo_pct']:+.1f}% ~ {closest_band['dist_hi_pct']:+.1f}%",
         })
+        diag_rows.append({"code": code, "ok": True, "src": src, "note": f"rows={len(df)}"})
 
     if not rows:
-        return pd.DataFrame(columns=["股票", "來源", "AI分數", "當下判斷", "可操作買區", "相對現價偏離", "摘要理由"])
+        st.error("沒有任何股票成功取得資料。建議：先按「網路測試」或改用 CSV 上傳備援。")
+        if show_debug and diag_rows:
+            st.dataframe(pd.DataFrame(diag_rows))
+        return
 
-    out = pd.DataFrame(rows)
-    out["__rank"] = out["當下判斷"].map({"BUY": 0, "WATCH": 1, "SELL": 2}).fillna(3)
-    out = out.sort_values(["__rank", "AI分數"], ascending=[True, False]).drop(columns="__rank")
-    out = out.drop_duplicates(subset=["股票"], keep="first")
-    return out.head(10).reset_index(drop=True)
+    out = pd.DataFrame(rows).sort_values(["AI分數", "當下判斷"], ascending=[False, True]).head(10)
+    st.dataframe(out, use_container_width=True)
 
-
-# -----------------------------
-# UI
-# -----------------------------
-st.set_page_config(page_title="AI 台股量化專業平台（無 Plotly）", layout="wide")
-st.title("🧠 AI 台股量化專業平台（無 Plotly / 全功能保留）")
-st.caption("多源備援 + 逐路診斷 + 指標共振 + 布林通道圖 + Top10掃描 + 交易計畫（不自動下單）")
-
-with st.sidebar:
-    st.subheader("設定")
-    mode = st.radio("選擇模式", ["單一股票分析", "Top 10 掃描器"], index=0)
-    months_opt = st.selectbox("資料期間", ["3mo", "6mo", "12mo", "24mo"], index=1)
-    months_back = {"3mo": 3, "6mo": 6, "12mo": 12, "24mo": 24}[months_opt]
-
-    show_debug = st.checkbox("顯示下載除錯資訊（Debug）", value=False)
-
-    st.markdown("---")
-    st.subheader("策略 / 參數")
-    strategy_label = st.radio("策略", ["回檔等待型（回檔分批）", "趨勢突破型（突破追價進場）"], index=0)
-    strategy = "pullback" if strategy_label.startswith("回檔") else "breakout"
-
-    max_buy_distance = st.slider(
-        "可操作買點最大距離（避免買點離現實太遠）",
-        0.02, 0.20, 0.12, 0.01
-    )
-
-    params: Dict[str, float] = {}
-    if strategy == "breakout":
-        params["max_chase_distance"] = st.slider("最大可接受追價/偏離距離（%）", 0.01, 0.20, 0.06, 0.01)
-        params["breakout_atr_buffer"] = st.slider("突破觸發 buffer（ATR 倍數）", 0.00, 1.00, 0.20, 0.05)
-
-    st.markdown("---")
-    st.subheader("⚙️ 系統狀態 / 缺套件提示")
-    for pkg, ok in DEPENDENCIES.items():
-        if ok:
-            st.success(f"✅ {pkg}")
-        else:
-            st.error(f"❌ {pkg} 缺失（請安裝）")
-
-    if DEPENDENCIES["finmind"]:
-        finmind_token_input = st.text_input("FinMind Token（若 Secrets 沒設，可手動填）", type="password", value="")
-        if finmind_token_input:
-            st.session_state["FINMIND_TOKEN_INPUT"] = finmind_token_input.strip()
-    else:
-        st.info("建議安裝 FinMind：requirements.txt 加入 FinMind>=1.0.0；並在 Secrets 設 FINMIND_TOKEN")
-
-    st.markdown("---")
-    st.subheader("🧪 網路測試（建議先按一次）")
-    if st.button("網路測試（建議先按一次）"):
-        test_rows = []
-        try:
-            r = _retry(lambda: requests.get("https://www.google.com", timeout=10), times=2, sleep=0.5)
-            test_rows.append({"target": "google.com", "status": r.status_code, "ok": r.status_code == 200})
-        except Exception as e:
-            test_rows.append({"target": "google.com", "status": "ERR", "ok": False, "note": str(e)})
-
-        if DEPENDENCIES["yfinance"] and yf is not None:
-            try:
-                r2 = _retry(lambda: yf.download("2330.TW", period="5d", progress=False), times=2, sleep=0.6)
-                ok2 = r2 is not None and len(r2) > 0
-                test_rows.append({"target": "yfinance 2330.TW", "status": "OK" if ok2 else "EMPTY", "ok": ok2})
-            except Exception as e:
-                test_rows.append({"target": "yfinance 2330.TW", "status": "ERR", "ok": False, "note": str(e)})
-
-        st.dataframe(pd.DataFrame(test_rows), use_container_width=True)
-
-# Main input + CSV upload
-colA, colB = st.columns([1.1, 1.4], gap="large")
-with colA:
-    code = st.text_input("請輸入股票代號", value="6274", help="可輸入 2330 / 2317 / 6274 等")
-    code = _as_str_ticker(code)
-
-    st.caption("（選用）上傳 export.csv 作為備援資料源（Date/Open/High/Low/Close/Volume）")
-    csv_upload = st.file_uploader("上傳 export.csv 作為備援資料源", type=["csv"])
-
-with colB:
-    st.info(
-        "💡 若 Cloud 偶發抓不到資料：\n"
-        "- 先按左側「網路測試」\n"
-        "- 或直接上傳 export.csv（Date/Open/High/Low/Close/Volume）即可完整分析"
-    )
-
-# -----------------------------
-# Mode: Single stock analysis
-# -----------------------------
-if mode == "單一股票分析":
-    if not code:
-        st.warning("請輸入股票代號")
-        st.stop()
-
-    df, src, attempts = fetch_ohlcv_multi(code, months_back, csv_upload=csv_upload)
-
-    if df is None:
-        st.error("❌ 無法取得資料（所有備援來源都失敗）。請稍後再試或改用 CSV 上傳備援。")
-        if show_debug:
-            st.subheader("🧩 逐路診斷（哪一路失敗、為什麼）")
-            st.dataframe(pd.DataFrame([a.__dict__ for a in attempts]), use_container_width=True)
-        st.stop()
-
-    df = add_indicators(df)
-    latest = df.iloc[-1]
-    score, score_details = resonance_score(latest)
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("目前價格", f"{float(latest['Close']):.2f}")
-    c2.metric("AI 共振分數", f"{score}/100")
-    c3.metric("資料來源", src)
-    c4.metric("最後日期 / 筆數", f"{latest['Date'].date()} / {len(df)}")
-
-    action, reason = determine_action(df, strategy, params)
-    st.subheader("📌 當下是否為買點/賣點？（可操作判斷）")
-    if action == "BUY":
-        st.success(f"✅ BUY：{reason}")
-    elif action == "SELL":
-        st.warning(f"⚠️ SELL：{reason}")
-    else:
-        st.info(f"⏳ WATCH：{reason}")
-
-    zones = estimate_zones(df, max_buy_distance=max_buy_distance)
-    buy_lo, buy_hi, d1, _ = zones["action_buy_zone"]
-    deep_lo, deep_hi, d2, _ = zones["deep_buy_zone"]
-    sell_lo, sell_hi, d3, _ = zones["sell_zone"]
-
-    def _pro_dist_text(d: float) -> str:
-        if np.isnan(d):
-            return "N/A"
-        if d < 0:
-            return f"需回檔約 {abs(d)*100:.1f}% 才進入區間（Pullback distance）"
-        return f"距離區間約 {d*100:.1f}%（Upside to zone）"
-
-    st.subheader("🗺️ 未來預估買賣點（區間 + 專業偏離說法）")
-    st.success(f"🟢 近端買點（可操作）：{buy_lo:.2f} ~ {buy_hi:.2f} ｜ {_pro_dist_text(d1)}")
-    st.info(f"🔵 深回檔買點（等待型）：{deep_lo:.2f} ~ {deep_hi:.2f} ｜ {_pro_dist_text(d2)}")
-    st.warning(f"🟡 近端賣點/壓力：{sell_lo:.2f} ~ {sell_hi:.2f} ｜ {_pro_dist_text(d3)}")
-
-    st.subheader("📊 指標共振摘要")
-    rsi14 = float(latest.get("RSI14", np.nan))
-    macd_h = float(latest.get("MACD_HIST", np.nan))
-    k = float(latest.get("K", np.nan))
-    d = float(latest.get("D", np.nan))
-    bb_pos = score_details.get("bb_pos", np.nan)
-
-    s1, s2, s3, s4 = st.columns(4)
-    s1.metric("RSI14", f"{rsi14:.1f}" if not np.isnan(rsi14) else "N/A")
-    s2.metric("MACD Hist", f"{macd_h:.3f}" if not np.isnan(macd_h) else "N/A")
-    s3.metric("KD (K/D)", f"{k:.1f}/{d:.1f}" if (not np.isnan(k) and not np.isnan(d)) else "N/A")
-    s4.metric("BB 位置", f"{bb_pos:.2f}" if not np.isnan(bb_pos) else "N/A")
-
-    st.subheader("📈 布林通道走勢圖（專業視覺判讀）")
-    view_df = df.tail(200).copy()
-
-    marks: List[Tuple[pd.Timestamp, float, str]] = []
-    if "EMA20" in view_df.columns:
-        cross_up = (view_df["Close"] > view_df["EMA20"]) & (view_df["Close"].shift(1) <= view_df["EMA20"].shift(1))
-        cross_dn = (view_df["Close"] < view_df["EMA20"]) & (view_df["Close"].shift(1) >= view_df["EMA20"].shift(1))
-
-        for idx in view_df.index[cross_up.fillna(False)].tolist()[-5:]:
-            marks.append((view_df.loc[idx, "Date"], float(view_df.loc[idx, "Close"]), "▲ EMA上穿"))
-        for idx in view_df.index[cross_dn.fillna(False)].tolist()[-5:]:
-            marks.append((view_df.loc[idx, "Date"], float(view_df.loc[idx, "Close"]), "▼ EMA下穿"))
-
-    plot_bollinger(view_df, title=f"{code} 布林通道 + 均線（來源：{src}）", marks=marks)
+    st.markdown("### ✅ Top10 補充：為什麼是這些？")
+    st.write("排序以 **AI分數（趨勢+動能+波動位置+量能）** 為主，並顯示最貼近現價的「可操作帶」。")
 
     if show_debug:
-        st.subheader("🧩 逐路診斷（哪一路失敗、為什麼）")
-        st.dataframe(pd.DataFrame([a.__dict__ for a in attempts]), use_container_width=True)
+        st.markdown("### 🧩 掃描診斷（成功/失敗概況）")
+        st.dataframe(pd.DataFrame(diag_rows))
 
-# -----------------------------
-# Mode: Top10 scanner
-# -----------------------------
+
+# ----------------------------
+# Run
+# ----------------------------
+if mode == "單一股票分析":
+    render_single(code)
 else:
-    st.subheader("🔥 AI 強勢股 Top 10（含可操作買賣判斷）")
-    st.caption("建議先用小池測試，避免 Cloud 全市場掃描超時。Top10 結果會自動去重。")
-
-    pool_mode = st.selectbox("掃描股票池", ["小池（推薦）", "自訂（貼代號）"], index=0)
-    if pool_mode.startswith("小池"):
-        codes = DEFAULT_POOL_SMALL
-    else:
-        raw = st.text_area("貼上股票代號（用空白/逗號/換行分隔）", value="2330 2317 2454 2303 3037 2382 2603 2609 6274 4967")
-        codes = [c for c in re.split(r"[\s,]+", raw.strip()) if c]
-
-    if st.button("開始掃描 Top10"):
-        with st.spinner("掃描中...（依股票池大小可能需要一點時間）"):
-            topdf = scan_top10(codes, months_back, max_buy_distance, strategy, params)
-
-        if topdf is None or topdf.empty:
-            st.warning("掃不到足夠資料（可能 API 被擋或資料不足）。建議：改用小池、或稍後再試。")
-        else:
-            st.dataframe(topdf, use_container_width=True)
-            st.caption("Top10 顯示『當下判斷（BUY/SELL/WATCH）』與『可操作買區』，可直接用來做明日測試。")
+    render_top10()
 
 st.markdown("---")
-st.caption("⚠️ 本工具僅做資訊顯示與風控演算，不構成投資建議，也不會自動下單。")
+st.caption("⚠️ 本工具僅供資訊顯示與風險控管演算，不構成投資建議，亦不會自動下單。")
