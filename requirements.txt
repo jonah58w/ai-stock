@@ -1,9 +1,10 @@
-streamlit
-pandas
-numpy
-matplotlib
-requests
-yfinance
-pandas-datareader
+streamlit>=1.38.0
+pandas>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+requests>=2.31.0
+yfinance>=0.2.40
+pandas_datareader>=0.10.0
+FinMind==1.3.5
 lxml
 html5lib
