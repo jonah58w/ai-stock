@@ -67,42 +67,46 @@ def breakout_score(df):
     if df is None or df.empty:
         return 0, None
 
-    if len(df) < 60:
-        return 0, None
     df = df.copy()
 
-    # 強制整理欄位
-    df = df[["Open","High","Low","Close","Volume"]]
-    df = df.dropna()
-    df = df.astype(float)
+    # 確保欄位存在
+    needed = ["Open","High","Low","Close","Volume"]
+    for c in needed:
+        if c not in df.columns:
+            return 0, None
 
-    if len(df) < 60:
+    df = df[needed].dropna()
+
+    # 強制數值化（避免 object / string）
+    for c in needed:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna()
+
+    if len(df) < 80:  # 突破掃描更保守（避免指標 NaN）
         return 0, None
 
     close = df["Close"]
     high = df["High"]
     low = df["Low"]
-    volume = df["Volume"]
+    vol = df["Volume"]
 
     try:
         ema20 = EMAIndicator(close, 20).ema_indicator()
         ema60 = EMAIndicator(close, 60).ema_indicator()
         rsi = RSIIndicator(close, 14).rsi()
-        macd = MACD(close).macd_diff()
-        bb = BollingerBands(close)
+        macd_h = MACD(close).macd_diff()
         atr = AverageTrueRange(high, low, close, 14).average_true_range()
-    except:
+    except Exception:
         return 0, None
 
     df["EMA20"] = ema20
     df["EMA60"] = ema60
     df["RSI"] = rsi
-    df["MACD_H"] = macd
+    df["MACD_H"] = macd_h
     df["ATR"] = atr
-
     df = df.dropna()
 
-    if len(df) < 60:
+    if len(df) < 80:
         return 0, None
 
     latest = df.iloc[-1]
@@ -110,33 +114,34 @@ def breakout_score(df):
     vol_mean = df["Volume"].iloc[-6:-1].mean()
 
     score = 0
-
     if latest["Close"] > latest["EMA20"] and latest["EMA20"] > latest["EMA60"]:
         score += 20
-
     if latest["Close"] > prev5_high:
         score += 20
-
     if latest["Volume"] > 1.5 * vol_mean:
         score += 20
-
     if latest["RSI"] > 55:
         score += 20
-
     if latest["MACD_H"] > 0:
         score += 20
 
-    entry = latest["Close"]
-    stop = entry - latest["ATR"] * 1.2
-    target = entry + (entry - stop) * 2.2
+    entry = float(latest["Close"])
+    stop = float(entry - latest["ATR"] * 1.2)
 
-    return score, {
-        "entry": round(entry,2),
-        "stop": round(stop,2),
-        "target": round(target,2),
-        "rr": round((target-entry)/(entry-stop),2)
+    # 防呆：避免 entry==stop 或 stop 為 nan
+    if not np.isfinite(entry) or not np.isfinite(stop) or entry <= stop:
+        return score, None
+
+    target = float(entry + (entry - stop) * 2.2)
+    rr = (target - entry) / (entry - stop)
+
+    trade = {
+        "entry": round(entry, 2),
+        "stop": round(stop, 2),
+        "target": round(target, 2),
+        "rr": round(rr, 2),
     }
-
+    return score, trade
 # ----------------------
 # 市場風險燈號（0050）
 # ----------------------
