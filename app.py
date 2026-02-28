@@ -5,7 +5,7 @@
 # ✅ 指標：MA/EMA、MACD、KD(Stoch)、RSI、ATR、布林通道、量能
 # ✅ 趨勢突破策略：突破追價進場 + 回測二次進場 + 失效止損 + 目標價
 # ✅ 專業距離：溢價/折價%、ATR 標準化距離、Entry Efficiency
-# ✅ 倉位建議（500–1000萬）：依 ATR 止損距離 + 風險% + 最大持倉% 自動計算
+# ✅ 倉位建議（500–1000 萬）：依 ATR 止損距離 + 風險% + 最大持倉% 自動計算
 # ✅ 最終備援：允許上傳 CSV（官方全掛也能跑）
 # ✅ 加強：依賴檢測 + 指數退避重試機制
 
@@ -655,7 +655,7 @@ with st.sidebar:
     stop_atr_mult = st.slider("失效止損距離（ATR 倍數）", 0.8, 3.0, 1.6, 0.1)
     target_rr = st.slider("目標風險報酬（RR）", 1.2, 5.0, 2.2, 0.1)
     st.divider()
-    st.subheader("資金 500–1000萬（倉位）")
+    st.subheader("資金 500–1000 萬（倉位）")
     account_ntd = st.slider("資金規模（NTD）", 5_000_000, 10_000_000, 7_000_000, step=100_000)
     risk_pct = st.slider("每筆最大風險（% of 資金）", 0.2, 2.0, 0.8, 0.1) / 100.0
     max_position_pct = st.slider("單筆最大持倉（% of 資金）", 5.0, 40.0, 20.0, 1.0) / 100.0
@@ -740,7 +740,7 @@ def analyze_one(code: str):
         **④ Targets（目標價）**：**{risk['target']:,.2f}**（RR≈{target_rr:.1f}）
         """
     )
-    st.markdown("## 🧮 倉位建議（500–1000萬 / 風險控管）")
+    st.markdown("## 🧮 倉位建議（500–1000 萬 / 風險控管）")
     size = position_sizing(
         account_ntd=account_ntd,
         entry=risk["entry_ref"],
@@ -816,11 +816,11 @@ def scan_top10(stock_pool: List[str]):
         rows.append({
             "股票": code,
             "來源": src,
-            "AI分數": score,
+            "AI 分數": score,
             "當下判斷": action,
             "現價": close,
             "突破觸發價": trigger,
-            "追價距離(%)": chase_pct,
+            "追價距離 (%)": chase_pct,
         })
         prog.progress(i / len(pool))
     if not rows:
@@ -829,8 +829,8 @@ def scan_top10(stock_pool: List[str]):
     out = pd.DataFrame(rows).drop_duplicates(subset=["股票"], keep="first")
     rank = {"BUY": 0, "WATCH": 1, "SELL": 2}
     out["rank"] = out["當下判斷"].map(rank).fillna(9).astype(int)
-    out["abs_chase"] = out["追價距離(%)"].abs()
-    out = out.sort_values(["rank", "AI分數", "abs_chase"], ascending=[True, False, True]).head(10)
+    out["abs_chase"] = out["追價距離 (%)"].abs()
+    out = out.sort_values(["rank", "AI 分數", "abs_chase"], ascending=[True, False, True]).head(10)
     out = out.drop(columns=["rank", "abs_chase"])
     st.markdown("## 🔥 AI 強勢股 Top 10（突破追價排序）")
     st.dataframe(out, use_container_width=True, hide_index=True)
