@@ -1,5 +1,5 @@
 # app.py
-# AI 台股量化專業平台（V23.1 Breakout Pro / 加強重試 + 缺套件提示）
+# AI 台股量化專業平台（V23.1 Breakout Pro / 無 Plotly / 加強重試 + 缺套件提示）
 # ✅ 單一股票分析 + Top10 掃描器
 # ✅ 逐路診斷（每條資料源的 HTTP / bytes / preview）
 # ✅ 指標：MA/EMA、MACD、KD(Stoch)、RSI、ATR、布林通道、量能
