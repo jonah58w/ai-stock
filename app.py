@@ -35,14 +35,29 @@ def load_data(code):
     start = end - dt.timedelta(days=180)
 
     try:
-        df = yf.download(ticker, start=start, end=end, progress=False)
+        df = yf.download(ticker, start=start, end=end, progress=False, group_by="column")
     except:
         return pd.DataFrame()
 
-    if df.empty:
+    if df is None or df.empty:
         return pd.DataFrame()
 
-    df.reset_index(inplace=True)
+    # 🔥 解決 MultiIndex 問題
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    df = df.reset_index()
+
+    # 強制保留必要欄位
+    needed = ["Open","High","Low","Close","Volume"]
+    for col in needed:
+        if col not in df.columns:
+            return pd.DataFrame()
+
+    df = df[["Open","High","Low","Close","Volume"]].copy()
+    df = df.dropna()
+    df = df.astype(float)
+
     return df
 
 # ----------------------
