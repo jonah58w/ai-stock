@@ -1,180 +1,198 @@
 # app.py
-# AI 台股量化專業平台（無 Plotly / 全功能保留 / 多源備援 + 逐路診斷 + Top10 + 指標共振 + 布林通道圖）
-# - 資料源備援：Yahoo(yfinance) -> Stooq(pandas-datareader) -> TWSE JSON -> TWSE CSV -> TPEX JSON/CSV -> CSV上傳
-# - 加強：HTTP retry/backoff、WAF/HTML/空回傳辨識、缺套件提示（requirements）
-# - 指標：SMA/EMA/RSI/MACD/KD/ATR/Bollinger/Volume
-# - 策略：回檔等待型（分批） / 趨勢突破型（突破追價進場）
-# - Top10：避免重複 ticker、顯示當下可操作判斷 + 交易計畫摘要
-# - 圖表：matplotlib（Close + Bollinger + SMA/EMA + 重要點位）
+# AI 台股量化專業平台（V23.1 Breakout Pro / 加強重試 + 缺套件提示）
+# ✅ 單一股票分析 + Top10 掃描器
+# ✅ 逐路診斷（每條資料源的 HTTP / bytes / preview）
+# ✅ 指標：MA/EMA、MACD、KD(Stoch)、RSI、ATR、布林通道、量能
+# ✅ 趨勢突破策略：突破追價進場 + 回測二次進場 + 失效止損 + 目標價
+# ✅ 專業距離：溢價/折價%、ATR 標準化距離、Entry Efficiency
+# ✅ 倉位建議（500–1000萬）：依 ATR 止損距離 + 風險% + 最大持倉% 自動計算
+# ✅ 最終備援：允許上傳 CSV（官方全掛也能跑）
+# ✅ 加強：依賴檢測 + 指數退避重試機制
 
 from __future__ import annotations
-
 import math
 import time
-import json
-import re
-import datetime as dt
+import sys
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict, List, Any
-
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
-import streamlit as st
-
-import matplotlib.pyplot as plt
 import requests
-
+import streamlit as st
+import matplotlib
+matplotlib.use('Agg')  # 強制非互動後端，避免 Cloud 報錯
+import matplotlib.pyplot as plt
 
 # -----------------------------
-# Optional imports (with hints)
+# 依賴套件檢測 (Dependency Check)
 # -----------------------------
-HAS_YFINANCE = True
-HAS_PDR = True
+DEPENDENCIES = {
+    "yfinance": False,
+    "pandas_datareader": False,
+    "matplotlib": True,  # 已 import
+    "requests": True,    # 已 import
+}
+
 try:
     import yfinance as yf
+    DEPENDENCIES["yfinance"] = True
 except Exception:
-    HAS_YFINANCE = False
+    yf = None
 
 try:
     from pandas_datareader import data as pdr
+    DEPENDENCIES["pandas_datareader"] = True
 except Exception:
-    HAS_PDR = False
-
-
-# -----------------------------
-# UI / Page
-# -----------------------------
-st.set_page_config(
-    page_title="AI 台股量化專業平台（無 Plotly / 全功能保留）",
-    layout="wide",
-)
-
-st.title("🧠 AI 台股量化專業平台（無 Plotly / 全功能保留）")
-st.caption("多源備援 + 逐路診斷 + 指標共振 + 布林通道圖 + Top10 掃描 + 交易計畫（不自動下單）")
-
+    pdr = None
 
 # -----------------------------
-# Helpers
+# Page Config
 # -----------------------------
-def now_utc() -> dt.datetime:
-    return dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
+st.set_page_config(page_title="AI 台股量化專業平台（V23.1 Breakout Pro）", layout="wide")
+st.markdown("# 🧠 AI 台股量化專業平台（V23.1 Breakout Pro）")
+st.caption("多源備援 + 逐路診斷 + 指標共振 + 布林通道圖 + 突破交易計畫（不自動下單）")
 
-
-def to_date_yyyymmdd(d: dt.date) -> str:
-    return d.strftime("%Y%m%d")
-
-
-def safe_int(x: str) -> Optional[int]:
-    try:
-        return int(x)
-    except Exception:
-        return None
-
-
-def is_html_text(text: str) -> bool:
-    t = (text or "").strip().lower()
-    if not t:
-        return False
-    # crude WAF/HTML detection
-    return ("<html" in t) or ("<!doctype" in t) or ("<head" in t) or ("cloudflare" in t) or ("access denied" in t)
-
-
-def compact_preview(text: str, n: int = 140) -> str:
-    if text is None:
-        return ""
-    s = re.sub(r"\s+", " ", str(text)).strip()
-    return (s[:n] + "…") if len(s) > n else s
-
-
+# -----------------------------
+# Diagnostics Model
+# -----------------------------
 @dataclass
-class FetchDiag:
+class FetchAttempt:
     source: str
-    result: str
     url: str
-    status: Optional[int] = None
-    reason: str = ""
+    status: str
+    http: Optional[int] = None
+    bytes: Optional[int] = None
+    note: str = ""
     preview: str = ""
 
+# -----------------------------
+# HTTP (Session + Headers + Retry)
+# -----------------------------
+@st.cache_resource
+def get_session() -> requests.Session:
+    s = requests.Session()
+    return s
 
-def make_retry_session(
-    timeout_sec: float = 8.0,
-    max_tries: int = 3,
-    backoff_sec: float = 0.8,
-    headers: Optional[dict] = None,
-):
-    """
-    Simple manual retry wrapper (works in Streamlit Cloud reliably).
-    """
-    sess = requests.Session()
-    base_headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; AIStockBot/1.0; +https://streamlit.io)",
+def _headers_for(url: str) -> Dict[str, str]:
+    # 依網域切換 Referer（Cloud 被擋時很重要）
+    if "tpex.org.tw" in url:
+        referer = "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43.php?l=zh-tw"
+    else:
+        referer = "https://www.twse.com.tw/zh/trading/historical/stock-day.html"
+    return {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/122.0 Safari/537.36",
         "Accept": "*/*",
+        "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+        "Connection": "keep-alive",
+        "Referer": referer,
+        "X-Requested-With": "XMLHttpRequest",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
     }
-    if headers:
-        base_headers.update(headers)
 
-    def get(url: str) -> Tuple[Optional[requests.Response], List[FetchDiag]]:
-        diags: List[FetchDiag] = []
-        last_exc = None
-        for i in range(max_tries):
-            try:
-                resp = sess.get(url, headers=base_headers, timeout=timeout_sec)
-                # Some endpoints return 200 with empty/HTML
-                txt = resp.text if resp is not None else ""
-                if resp.status_code >= 500:
-                    diags.append(FetchDiag(
-                        source="HTTP",
-                        result="RETRY",
-                        url=url,
-                        status=resp.status_code,
-                        reason=f"Server error {resp.status_code} (try {i+1}/{max_tries})",
-                        preview=compact_preview(txt),
-                    ))
-                    time.sleep(backoff_sec * (i + 1))
-                    continue
-                return resp, diags
-            except Exception as e:
-                last_exc = e
-                diags.append(FetchDiag(
-                    source="HTTP",
-                    result="RETRY",
-                    url=url,
-                    status=None,
-                    reason=f"Exception: {type(e).__name__}: {e} (try {i+1}/{max_tries})",
-                    preview="",
-                ))
-                time.sleep(backoff_sec * (i + 1))
+def _requests_get(url: str, timeout: int = 14, max_retries: int = 3) -> Tuple[Optional[requests.Response], Optional[str], str]:
+    """
+    加強版請求：包含指數退避重試 (Exponential Backoff)
+    回傳 (response, error, preview_text)
+    """
+    sess = get_session()
+    last_err = None
+    preview = ""
+    
+    for i in range(max_retries):
+        try:
+            r = sess.get(url, headers=_headers_for(url), timeout=timeout)
+            txt = r.text or ""
+            preview = txt[:180].replace("\n", " ")
+            return r, None, preview
+        except Exception as e:
+            last_err = str(e)
+            # 指數退避：等待 1s, 2s, 4s...
+            wait_time = (2 ** i) * 0.5
+            time.sleep(wait_time)
+            
+    return None, last_err, preview
 
-        # failed
-        diags.append(FetchDiag(
-            source="HTTP",
-            result="FAIL",
-            url=url,
-            status=None,
-            reason=f"All retries failed: {type(last_exc).__name__}: {last_exc}" if last_exc else "All retries failed",
-            preview="",
-        ))
-        return None, diags
+def _safe_float(x) -> Optional[float]:
+    try:
+        if x is None:
+            return None
+        if isinstance(x, str):
+            x = x.replace(",", "").strip()
+            if x in ["", "--", "—", "NA", "N/A", "null", "None"]:
+                return None
+            return float(x)
+    except Exception:
+        return None
+    return None
 
-    return get
+def _yyyymmdd(dt: datetime) -> str:
+    return f"{dt.year:04d}{dt.month:02d}{dt.day:02d}"
 
+def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "Date" in out.columns:
+        out["Date"] = pd.to_datetime(out["Date"])
+        out = out.set_index("Date")
+    out.index = pd.to_datetime(out.index)
+    out = out.sort_index()
+    # normalize column names
+    col_map = {c.lower(): c for c in out.columns}
+    def pick(names: List[str]) -> Optional[str]:
+        for n in names:
+            if n.lower() in col_map:
+                return col_map[n.lower()]
+        return None
+    o = pick(["open"])
+    h = pick(["high"])
+    l = pick(["low"])
+    c = pick(["close", "adj close"])
+    v = pick(["volume", "成交股數", "成交量"])
+    if c is None:
+        raise ValueError("No Close column")
+    rename = {}
+    if o: rename[o] = "Open"
+    if h: rename[h] = "High"
+    if l: rename[l] = "Low"
+    rename[c] = "Close"
+    if v: rename[v] = "Volume"
+    out = out.rename(columns=rename)
+    for k in ["Open", "High", "Low"]:
+        if k not in out.columns:
+            out[k] = out["Close"]
+    if "Volume" not in out.columns:
+        out["Volume"] = np.nan
+    out = out[["Open", "High", "Low", "Close", "Volume"]].copy()
+    out = out.dropna(subset=["Close"])
+    return out
 
 # -----------------------------
-# Technical Indicators
+# Indicators (no ta-lib / no plotly)
 # -----------------------------
-def ema(series: pd.Series, span: int) -> pd.Series:
-    return series.ewm(span=span, adjust=False).mean()
+def ema(s: pd.Series, span: int) -> pd.Series:
+    return s.ewm(span=span, adjust=False).mean()
 
+def sma(s: pd.Series, window: int) -> pd.Series:
+    return s.rolling(window).mean()
 
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
     delta = close.diff()
-    up = delta.clip(lower=0.0)
-    down = (-delta).clip(lower=0.0)
-    ma_up = up.ewm(alpha=1 / period, adjust=False).mean()
-    ma_down = down.ewm(alpha=1 / period, adjust=False).mean()
-    rs = ma_up / (ma_down.replace(0, np.nan))
+    gain = delta.clip(lower=0).rolling(period).mean()
+    loss = (-delta.clip(upper=0)).rolling(period).mean()
+    rs = gain / (loss.replace(0, np.nan))
     return 100 - (100 / (1 + rs))
 
+def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    high, low, close = df["High"], df["Low"], df["Close"]
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        (high - low),
+        (high - prev_close).abs(),
+        (low - prev_close).abs()
+    ], axis=1).max(axis=1)
+    return tr.rolling(period).mean()
 
 def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[pd.Series, pd.Series, pd.Series]:
     macd_line = ema(close, fast) - ema(close, slow)
@@ -182,1085 +200,672 @@ def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> T
     hist = macd_line - signal_line
     return macd_line, signal_line, hist
 
-
-def true_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
-    prev_close = close.shift(1)
-    tr = pd.concat([
-        (high - low),
-        (high - prev_close).abs(),
-        (low - prev_close).abs()
-    ], axis=1).max(axis=1)
-    return tr
-
-
-def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-    tr = true_range(high, low, close)
-    return tr.ewm(alpha=1 / period, adjust=False).mean()
-
-
-def stochastic_kd(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int = 9, d_period: int = 3) -> Tuple[pd.Series, pd.Series]:
-    lowest_low = low.rolling(k_period).min()
-    highest_high = high.rolling(k_period).max()
-    k = 100 * (close - lowest_low) / (highest_high - lowest_low).replace(0, np.nan)
+def stoch_kd(df: pd.DataFrame, k_period: int = 9, d_period: int = 3) -> Tuple[pd.Series, pd.Series]:
+    low_min = df["Low"].rolling(k_period).min()
+    high_max = df["High"].rolling(k_period).max()
+    k = 100 * (df["Close"] - low_min) / (high_max - low_min).replace(0, np.nan)
     d = k.rolling(d_period).mean()
     return k, d
 
-
-def bollinger(close: pd.Series, period: int = 20, n_std: float = 2.0) -> Tuple[pd.Series, pd.Series, pd.Series]:
-    mid = close.rolling(period).mean()
-    std = close.rolling(period).std(ddof=0)
+def bollinger(close: pd.Series, window: int = 20, n_std: float = 2.0) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    mid = sma(close, window)
+    std = close.rolling(window).std()
     upper = mid + n_std * std
     lower = mid - n_std * std
-    return upper, mid, lower
+    return lower, mid, upper
 
-
-def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df["SMA20"] = df["Close"].rolling(20).mean()
-    df["EMA20"] = ema(df["Close"], 20)
-    df["RSI14"] = rsi(df["Close"], 14)
-    m, s, h = macd(df["Close"])
-    df["MACD"] = m
-    df["MACD_SIGNAL"] = s
-    df["MACD_HIST"] = h
-    k, d = stochastic_kd(df["High"], df["Low"], df["Close"])
-    df["K"] = k
-    df["D"] = d
-    df["ATR14"] = atr(df["High"], df["Low"], df["Close"], 14)
-    up, mid, low = bollinger(df["Close"], 20, 2.0)
-    df["BB_UP"] = up
-    df["BB_MID"] = mid
-    df["BB_LOW"] = low
-    df["VOL_SMA20"] = df["Volume"].rolling(20).mean()
-    return df
-
-
-# -----------------------------
-# Data Normalization
-# -----------------------------
-def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Ensure columns: Date index (datetime), Open/High/Low/Close/Volume float.
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    df = df.copy()
-
-    # If Date is a column, set as index
-    if "Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-        df = df.dropna(subset=["Date"]).set_index("Date")
-
-    if not isinstance(df.index, pd.DatetimeIndex):
-        df.index = pd.to_datetime(df.index, errors="coerce")
-
-    df = df[~df.index.isna()].sort_index()
-
-    # rename common variants
-    colmap = {c: c.strip().title() for c in df.columns}
-    df.rename(columns=colmap, inplace=True)
-
-    # handle Adj Close
-    if "Adj Close" in df.columns and "Close" not in df.columns:
-        df.rename(columns={"Adj Close": "Close"}, inplace=True)
-
-    required = ["Open", "High", "Low", "Close"]
-    for c in required:
-        if c not in df.columns:
-            # try lowercase
-            if c.lower() in df.columns:
-                df.rename(columns={c.lower(): c}, inplace=True)
-
-    if "Volume" not in df.columns and "Vol" in df.columns:
-        df.rename(columns={"Vol": "Volume"}, inplace=True)
-
-    # coerce numeric
-    for c in ["Open", "High", "Low", "Close", "Volume"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    df = df.dropna(subset=["Close"])
-    if "Volume" not in df.columns:
-        df["Volume"] = np.nan
-
-    # drop duplicates
-    df = df[~df.index.duplicated(keep="last")]
-    return df
-
+def compute_signals(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["SMA20"] = sma(out["Close"], 20)
+    out["SMA60"] = sma(out["Close"], 60)
+    out["EMA20"] = ema(out["Close"], 20)
+    out["RSI14"] = rsi(out["Close"], 14)
+    out["ATR14"] = atr(out, 14)
+    macd_line, sig_line, hist = macd(out["Close"])
+    out["MACD"] = macd_line
+    out["MACD_SIG"] = sig_line
+    out["MACD_HIST"] = hist
+    k, d = stoch_kd(out, 9, 3)
+    out["K"] = k
+    out["D"] = d
+    bb_l, bb_m, bb_u = bollinger(out["Close"], 20, 2.0)
+    out["BB_L"] = bb_l
+    out["BB_M"] = bb_m
+    out["BB_U"] = bb_u
+    out["BB_W"] = (bb_u - bb_l) / bb_m
+    out["VMA20"] = sma(out["Volume"].fillna(method="ffill"), 20)
+    return out
 
 # -----------------------------
-# Sources: Yahoo / Stooq / TWSE / TPEX / CSV upload
+# Confluence Score
 # -----------------------------
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_yfinance(symbol: str, period: str) -> Tuple[pd.DataFrame, List[FetchDiag]]:
-    diags: List[FetchDiag] = []
-    if not HAS_YFINANCE:
-        diags.append(FetchDiag(
-            source="YFINANCE",
-            result="MISSING_PKG",
-            url="",
-            reason="yfinance not installed. Add to requirements.txt: yfinance lxml html5lib",
-        ))
-        return pd.DataFrame(), diags
-
-    try:
-        # yfinance period mapping
-        yf_period = {"3mo": "3mo", "6mo": "6mo", "1y": "1y", "2y": "2y", "5y": "5y"}.get(period, "6mo")
-        df = yf.download(symbol, period=yf_period, interval="1d", auto_adjust=False, progress=False)
-        df = normalize_ohlcv(df)
-        if df.empty or len(df) < 30:
-            diags.append(FetchDiag(source="YFINANCE", result="TOO_SHORT", url=symbol, reason="Downloaded data too short/empty", preview=""))
-            return pd.DataFrame(), diags
-        diags.append(FetchDiag(source="YFINANCE", result="OK", url=symbol, status=200, reason=f"rows={len(df)}"))
-        return df, diags
-    except Exception as e:
-        diags.append(FetchDiag(source="YFINANCE", result="FAIL", url=symbol, reason=f"{type(e).__name__}: {e}"))
-        return pd.DataFrame(), diags
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_stooq(symbol: str, period: str) -> Tuple[pd.DataFrame, List[FetchDiag]]:
-    diags: List[FetchDiag] = []
-    if not HAS_PDR:
-        diags.append(FetchDiag(
-            source="STOOQ",
-            result="MISSING_PKG",
-            url="",
-            reason="pandas-datareader not installed. Add to requirements.txt: pandas-datareader",
-        ))
-        return pd.DataFrame(), diags
-
-    try:
-        # Stooq expects e.g. 2330.TW ; if not, still try
-        df = pdr.DataReader(symbol, "stooq")
-        df = df.sort_index()
-        df = normalize_ohlcv(df)
-
-        # cut by period
-        days_map = {"3mo": 80, "6mo": 160, "1y": 260, "2y": 520, "5y": 1300}
-        need = days_map.get(period, 160)
-        if len(df) > need:
-            df = df.iloc[-need:]
-
-        if df.empty or len(df) < 30:
-            diags.append(FetchDiag(source="STOOQ", result="TOO_SHORT", url=symbol, reason="Downloaded data too short/empty"))
-            return pd.DataFrame(), diags
-
-        diags.append(FetchDiag(source="STOOQ", result="OK", url=symbol, status=200, reason=f"rows={len(df)}"))
-        return df, diags
-    except Exception as e:
-        diags.append(FetchDiag(source="STOOQ", result="FAIL", url=symbol, reason=f"{type(e).__name__}: {e}"))
-        return pd.DataFrame(), diags
-
-
-def twse_json_url(stock_no: str, yyyymmdd: str) -> str:
-    return f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={yyyymmdd}&stockNo={stock_no}"
-
-
-def twse_csv_url(stock_no: str, yyyymmdd: str) -> str:
-    return f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=csv&date={yyyymmdd}&stockNo={stock_no}"
-
-
-def tpex_json_url(stock_no: str, roc_yyy_mm_dd: str) -> str:
-    # example d=114/02/27
-    return f"https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw&d={roc_yyy_mm_dd}&stkno={stock_no}&response=json"
-
-
-def roc_date_str(d: dt.date) -> str:
-    # ROC year = AD - 1911
-    y = d.year - 1911
-    return f"{y:03d}/{d.month:02d}/{d.day:02d}"
-
-
-def parse_twse_json(obj: dict) -> pd.DataFrame:
-    # obj['data'] rows: [date, volume, amount, open, high, low, close, change, transactions]
-    if not obj or "data" not in obj or not obj["data"]:
-        return pd.DataFrame()
-    rows = obj["data"]
-    out = []
-    for r in rows:
-        try:
-            # date like "114/02/27"
-            date_str = r[0]
-            parts = date_str.split("/")
-            roc_y = int(parts[0]); m = int(parts[1]); d = int(parts[2])
-            ad_y = roc_y + 1911
-            date = dt.date(ad_y, m, d)
-            o = float(str(r[3]).replace(",", ""))
-            h = float(str(r[4]).replace(",", ""))
-            l = float(str(r[5]).replace(",", ""))
-            c = float(str(r[6]).replace(",", ""))
-            v = float(str(r[1]).replace(",", ""))
-            out.append([date, o, h, l, c, v])
-        except Exception:
-            continue
-    if not out:
-        return pd.DataFrame()
-    df = pd.DataFrame(out, columns=["Date", "Open", "High", "Low", "Close", "Volume"])
-    return normalize_ohlcv(df)
-
-
-def parse_twse_csv(text: str) -> pd.DataFrame:
-    # CSV contains header lines; data lines include ROC date and prices
-    if not text or len(text.strip()) < 50:
-        return pd.DataFrame()
-    if is_html_text(text):
-        return pd.DataFrame()
-
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    # data rows often start with "114/02/03"
-    data_lines = [ln for ln in lines if re.match(r"^\d{3}/\d{2}/\d{2}", ln)]
-    if not data_lines:
-        return pd.DataFrame()
-
-    out = []
-    for ln in data_lines:
-        parts = [p.strip().strip('"') for p in ln.split(",")]
-        if len(parts) < 7:
-            continue
-        try:
-            date_str = parts[0]
-            roc_y, m, d = [int(x) for x in date_str.split("/")]
-            ad_y = roc_y + 1911
-            date = dt.date(ad_y, m, d)
-            o = float(parts[3].replace(",", ""))
-            h = float(parts[4].replace(",", ""))
-            l = float(parts[5].replace(",", ""))
-            c = float(parts[6].replace(",", ""))
-            v = float(parts[1].replace(",", ""))
-            out.append([date, o, h, l, c, v])
-        except Exception:
-            continue
-
-    df = pd.DataFrame(out, columns=["Date", "Open", "High", "Low", "Close", "Volume"])
-    return normalize_ohlcv(df)
-
-
-def parse_tpex_json(obj: dict) -> pd.DataFrame:
-    # TPEX returns "aaData" or "data" depending on endpoint version
-    rows = None
-    for key in ["aaData", "data"]:
-        if isinstance(obj, dict) and key in obj and obj[key]:
-            rows = obj[key]
-            break
-    if not rows:
-        return pd.DataFrame()
-
-    out = []
-    for r in rows:
-        # commonly: [date, close, change, open, high, low, volume, ...]
-        try:
-            date_str = r[0]  # "114/02/27"
-            roc_y, m, d = [int(x) for x in date_str.split("/")]
-            ad_y = roc_y + 1911
-            date = dt.date(ad_y, m, d)
-
-            c = float(str(r[1]).replace(",", ""))
-            o = float(str(r[3]).replace(",", ""))
-            h = float(str(r[4]).replace(",", ""))
-            l = float(str(r[5]).replace(",", ""))
-            v = float(str(r[6]).replace(",", ""))
-            out.append([date, o, h, l, c, v])
-        except Exception:
-            continue
-
-    df = pd.DataFrame(out, columns=["Date", "Open", "High", "Low", "Close", "Volume"])
-    return normalize_ohlcv(df)
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_twse_monthly(stock_no: str, period: str) -> Tuple[pd.DataFrame, List[FetchDiag]]:
-    get = make_retry_session(timeout_sec=8, max_tries=3, backoff_sec=0.7)
-    diags: List[FetchDiag] = []
-    days_map = {"3mo": 3, "6mo": 6, "1y": 12, "2y": 24, "5y": 60}
-    months = days_map.get(period, 6)
-
-    today = dt.date.today()
-    # fetch month by month (from oldest to newest)
-    frames = []
-    for i in range(months, -1, -1):
-        d = (today.replace(day=1) - dt.timedelta(days=1)).replace(day=1)  # last month first day
-        # walk back i months from current month
-        mm = today.month - i
-        yy = today.year
-        while mm <= 0:
-            mm += 12
-            yy -= 1
-        while mm > 12:
-            mm -= 12
-            yy += 1
-        month_date = dt.date(yy, mm, 1)
-        yyyymmdd = to_date_yyyymmdd(month_date)
-
-        # JSON first
-        url = twse_json_url(stock_no, yyyymmdd)
-        resp, retry_diags = get(url)
-        diags.extend([FetchDiag(source="TWSE_JSON", result=d.result, url=url, status=d.status, reason=d.reason, preview=d.preview) for d in retry_diags])
-
-        if resp is None:
-            diags.append(FetchDiag(source="TWSE_JSON", result="FAIL", url=url, reason="No response"))
-        else:
-            txt = resp.text or ""
-            if is_html_text(txt):
-                diags.append(FetchDiag(source="TWSE_JSON", result="WAF_HTML", url=url, status=resp.status_code, reason="HTML/WAF returned", preview=compact_preview(txt)))
-            else:
-                try:
-                    obj = resp.json()
-                    df = parse_twse_json(obj)
-                    if not df.empty:
-                        frames.append(df)
-                        diags.append(FetchDiag(source="TWSE_JSON", result="OK", url=url, status=resp.status_code, reason=f"rows={len(df)}"))
-                        continue
-                    else:
-                        diags.append(FetchDiag(source="TWSE_JSON", result="EMPTY_TEXT", url=url, status=resp.status_code, reason="JSON parsed but no data", preview=compact_preview(txt)))
-                except Exception as e:
-                    diags.append(FetchDiag(source="TWSE_JSON", result="PARSE_FAIL", url=url, status=resp.status_code, reason=f"{type(e).__name__}: {e}", preview=compact_preview(txt)))
-
-        # fallback CSV
-        url2 = twse_csv_url(stock_no, yyyymmdd)
-        resp2, retry_diags2 = get(url2)
-        diags.extend([FetchDiag(source="TWSE_CSV", result=d.result, url=url2, status=d.status, reason=d.reason, preview=d.preview) for d in retry_diags2])
-
-        if resp2 is None:
-            diags.append(FetchDiag(source="TWSE_CSV", result="FAIL", url=url2, reason="No response"))
-            continue
-
-        txt2 = resp2.text or ""
-        if is_html_text(txt2):
-            diags.append(FetchDiag(source="TWSE_CSV", result="WAF_HTML", url=url2, status=resp2.status_code, reason="HTML/WAF returned", preview=compact_preview(txt2)))
-            continue
-
-        df2 = parse_twse_csv(txt2)
-        if not df2.empty:
-            frames.append(df2)
-            diags.append(FetchDiag(source="TWSE_CSV", result="OK", url=url2, status=resp2.status_code, reason=f"rows={len(df2)}"))
-        else:
-            diags.append(FetchDiag(source="TWSE_CSV", result="EMPTY_TEXT", url=url2, status=resp2.status_code, reason="CSV empty/invalid", preview=compact_preview(txt2)))
-
-    if not frames:
-        return pd.DataFrame(), diags
-
-    df_all = pd.concat(frames).sort_index()
-    df_all = df_all[~df_all.index.duplicated(keep="last")]
-    # keep last N
-    need_days = {"3mo": 80, "6mo": 160, "1y": 260, "2y": 520, "5y": 1300}.get(period, 160)
-    if len(df_all) > need_days:
-        df_all = df_all.iloc[-need_days:]
-    return df_all, diags
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_tpex_monthly(stock_no: str, period: str) -> Tuple[pd.DataFrame, List[FetchDiag]]:
-    get = make_retry_session(timeout_sec=8, max_tries=3, backoff_sec=0.7)
-    diags: List[FetchDiag] = []
-    months_map = {"3mo": 3, "6mo": 6, "1y": 12, "2y": 24, "5y": 60}
-    months = months_map.get(period, 6)
-
-    today = dt.date.today()
-    frames = []
-    for i in range(months, -1, -1):
-        mm = today.month - i
-        yy = today.year
-        while mm <= 0:
-            mm += 12
-            yy -= 1
-        month_date = dt.date(yy, mm, 1)
-        roc = roc_date_str(month_date)
-        url = tpex_json_url(stock_no, roc)
-
-        resp, retry_diags = get(url)
-        diags.extend([FetchDiag(source="TPEX_JSON", result=d.result, url=url, status=d.status, reason=d.reason, preview=d.preview) for d in retry_diags])
-
-        if resp is None:
-            diags.append(FetchDiag(source="TPEX_JSON", result="FAIL", url=url, reason="No response"))
-            continue
-
-        txt = resp.text or ""
-        if is_html_text(txt):
-            diags.append(FetchDiag(source="TPEX_JSON", result="WAF_HTML", url=url, status=resp.status_code, reason="HTML/WAF returned", preview=compact_preview(txt)))
-            continue
-
-        try:
-            obj = resp.json()
-            df = parse_tpex_json(obj)
-            if not df.empty:
-                frames.append(df)
-                diags.append(FetchDiag(source="TPEX_JSON", result="OK", url=url, status=resp.status_code, reason=f"rows={len(df)}"))
-            else:
-                diags.append(FetchDiag(source="TPEX_JSON", result="EMPTY_TEXT", url=url, status=resp.status_code, reason="JSON parsed but no data", preview=compact_preview(txt)))
-        except Exception as e:
-            diags.append(FetchDiag(source="TPEX_JSON", result="PARSE_FAIL", url=url, status=resp.status_code, reason=f"{type(e).__name__}: {e}", preview=compact_preview(txt)))
-
-    if not frames:
-        return pd.DataFrame(), diags
-
-    df_all = pd.concat(frames).sort_index()
-    df_all = df_all[~df_all.index.duplicated(keep="last")]
-    need_days = {"3mo": 80, "6mo": 160, "1y": 260, "2y": 520, "5y": 1300}.get(period, 160)
-    if len(df_all) > need_days:
-        df_all = df_all.iloc[-need_days:]
-    return df_all, diags
-
-
-def parse_uploaded_csv(uploaded: Any) -> pd.DataFrame:
-    try:
-        df = pd.read_csv(uploaded)
-    except Exception:
-        try:
-            df = pd.read_csv(uploaded, encoding="utf-8-sig")
-        except Exception:
-            return pd.DataFrame()
-
-    # Try common formats
-    # expected: Date/Open/High/Low/Close/Volume
-    if "Date" not in df.columns:
-        # sometimes first column unnamed date
-        if df.columns[0].lower() in ["date", "datetime"] or "date" in df.columns[0].lower():
-            df.rename(columns={df.columns[0]: "Date"}, inplace=True)
-
-    return normalize_ohlcv(df)
-
-
-# -----------------------------
-# Symbol helpers
-# -----------------------------
-def normalize_ticker_input(raw: str) -> str:
-    r = (raw or "").strip().upper()
-    r = r.replace(" ", "")
-    return r
-
-
-def candidate_symbols(ticker: str) -> List[str]:
-    """
-    For Taiwan stocks: try .TW then .TWO if numeric 4-5 digits.
-    Accept if user already provided suffix.
-    """
-    t = normalize_ticker_input(ticker)
-    if not t:
-        return []
-    if "." in t:
-        return [t]
-    if t.isdigit():
-        return [f"{t}.TW", f"{t}.TWO", t]  # yfinance/stooq sometimes accept plain
-    return [t]
-
-
-# -----------------------------
-# Scoring & Strategy logic
-# -----------------------------
-def resonance_score(latest: pd.Series) -> int:
-    """
-    0..100 simple composite score based on multi-indicator alignment.
-    """
+def confluence_score(last: pd.Series) -> Tuple[int, Dict[str, bool]]:
+    flags = {}
+    flags["price_above_ema20"] = bool(last["Close"] > last["EMA20"]) if pd.notna(last["EMA20"]) else False
+    flags["ema20_above_sma60"] = bool(last["EMA20"] > last["SMA60"]) if pd.notna(last["SMA60"]) else False
+    flags["macd_bull"] = bool(last["MACD"] > last["MACD_SIG"]) if pd.notna(last["MACD_SIG"]) else False
+    flags["macd_hist_up"] = bool(last["MACD_HIST"] > 0) if pd.notna(last["MACD_HIST"]) else False
+    flags["rsi_ok"] = bool(50 <= last["RSI14"] <= 78) if pd.notna(last["RSI14"]) else False
+    flags["rsi_overbought"] = bool(last["RSI14"] > 80) if pd.notna(last["RSI14"]) else False
+    flags["kd_bull"] = bool(last["K"] > last["D"]) if pd.notna(last["D"]) else False
+    flags["vol_up"] = bool(last["Volume"] > last["VMA20"]) if pd.notna(last["VMA20"]) and pd.notna(last["Volume"]) else False
+    flags["break_bb_upper"] = bool(last["Close"] >= last["BB_U"]) if pd.notna(last["BB_U"]) else False
     score = 0
-
-    # Trend
-    if pd.notna(latest.get("SMA20")) and pd.notna(latest.get("EMA20")):
-        if latest["Close"] > latest["SMA20"]:
-            score += 10
-        if latest["EMA20"] > latest["SMA20"]:
-            score += 10
-
-    # Momentum
-    if pd.notna(latest.get("MACD")) and pd.notna(latest.get("MACD_SIGNAL")):
-        if latest["MACD"] > latest["MACD_SIGNAL"]:
-            score += 10
-        if latest.get("MACD_HIST", 0) > 0:
-            score += 5
-
-    # RSI / KD (avoid extremes)
-    r = latest.get("RSI14")
-    if pd.notna(r):
-        if 40 <= r <= 65:
-            score += 10
-        elif r < 35:
-            score += 6
-        elif r > 70:
-            score += 3
-
-    k = latest.get("K")
-    d = latest.get("D")
-    if pd.notna(k) and pd.notna(d):
-        if k > d:
-            score += 10
-        if k < 25:
-            score += 6
-        if k > 80:
-            score += 3
-
-    # Bollinger position
-    bb_low = latest.get("BB_LOW")
-    bb_up = latest.get("BB_UP")
-    if pd.notna(bb_low) and pd.notna(bb_up):
-        if latest["Close"] <= bb_low * 1.02:
-            score += 12
-        if latest["Close"] >= bb_up * 0.98:
-            score += 12
-
-    # Volume confirmation
-    if pd.notna(latest.get("VOL_SMA20")) and pd.notna(latest.get("Volume")):
-        if latest["Volume"] > latest["VOL_SMA20"]:
-            score += 8
-
-    return int(min(100, max(0, score)))
-
-
-def pct(x: float) -> str:
-    return f"{x*100:.1f}%"
-
-
-def premium_discount(current: float, zone_mid: float) -> float:
-    # + = premium (current above zone), - = discount (current below zone)
-    if zone_mid <= 0:
-        return np.nan
-    return (current / zone_mid) - 1.0
-
-
-def professional_distance_label(current: float, z1: float, z2: float) -> str:
-    lo, hi = (min(z1, z2), max(z1, z2))
-    mid = (lo + hi) / 2
-    pdiff = premium_discount(current, mid)
-    if np.isnan(pdiff):
-        return "—"
-    # professional wording
-    if pdiff > 0:
-        return f"相對區間中值溢價：+{abs(pdiff)*100:.1f}%（現價高於觸發區）"
-    else:
-        return f"相對區間中值折價：-{abs(pdiff)*100:.1f}%（現價低於觸發區）"
-
-
-def compute_trade_zones(df: pd.DataFrame) -> Dict[str, Any]:
-    """
-    Compute buy/sell zones based on Bollinger + ATR + local structure.
-    """
-    latest = df.iloc[-1]
-    close = float(latest["Close"])
-    atr14 = float(latest.get("ATR14", np.nan))
-    bb_low = float(latest.get("BB_LOW", np.nan))
-    bb_mid = float(latest.get("BB_MID", np.nan))
-    bb_up = float(latest.get("BB_UP", np.nan))
-
-    # local support/resistance
-    lookback = min(60, len(df))
-    recent = df.iloc[-lookback:]
-    support = float(recent["Low"].min())
-    resistance = float(recent["High"].max())
-
-    # near-term buy zone: max(support, BB_LOW) with a small band width tied to ATR
-    if np.isnan(atr14) or atr14 <= 0:
-        band = close * 0.015
-    else:
-        band = max(atr14 * 0.6, close * 0.01)
-
-    buy_anchor = np.nanmax([support, bb_low]) if not (np.isnan(bb_low) and np.isnan(support)) else close * 0.95
-    near_buy_lo = buy_anchor
-    near_buy_hi = buy_anchor + band
-
-    # deep buy zone: below BB_LOW (value area)
-    deep_buy_lo = max(0.0, (bb_low - band * 1.6) if not np.isnan(bb_low) else close * 0.88)
-    deep_buy_hi = max(deep_buy_lo, (bb_low - band * 0.6) if not np.isnan(bb_low) else close * 0.92)
-
-    # sell zone near BB_UP / resistance
-    sell_anchor = np.nanmin([resistance, bb_up]) if not (np.isnan(bb_up) and np.isnan(resistance)) else close * 1.05
-    near_sell_lo = max(0.0, sell_anchor - band)
-    near_sell_hi = sell_anchor
-
-    # aggressive breakout sell / take profit
-    ext_sell_lo = max(0.0, sell_anchor)
-    ext_sell_hi = sell_anchor + band * 1.5
-
-    return {
-        "close": close,
-        "atr": atr14,
-        "bb_low": bb_low,
-        "bb_mid": bb_mid,
-        "bb_up": bb_up,
-        "support": support,
-        "resistance": resistance,
-        "near_buy": (near_buy_lo, near_buy_hi),
-        "deep_buy": (deep_buy_lo, deep_buy_hi),
-        "near_sell": (near_sell_lo, near_sell_hi),
-        "ext_sell": (ext_sell_lo, ext_sell_hi),
-    }
-
-
-def strategy_pullback(df: pd.DataFrame, max_buy_distance: float) -> Dict[str, Any]:
-    """
-    回檔等待型（分批）：偏向「等回到區間」再分批買
-    """
-    latest = df.iloc[-1]
-    zones = compute_trade_zones(df)
-    close = zones["close"]
-    near_buy_lo, near_buy_hi = zones["near_buy"]
-    deep_buy_lo, deep_buy_hi = zones["deep_buy"]
-
-    r = latest.get("RSI14", np.nan)
-    k = latest.get("K", np.nan)
-    d = latest.get("D", np.nan)
-
-    # condition: near buy zone + oversold confirmation
-    in_near = (close >= near_buy_lo) and (close <= near_buy_hi)
-    in_deep = (close >= deep_buy_lo) and (close <= deep_buy_hi)
-
-    oversold = (pd.notna(r) and r < 38) or (pd.notna(k) and k < 25) or (pd.notna(d) and d < 25)
-    macd_turn = pd.notna(latest.get("MACD_HIST")) and latest.get("MACD_HIST") > (df["MACD_HIST"].iloc[-2] if len(df) >= 2 else -999)
-
-    # distance filter: avoid "buy zone too far from current"
-    # We enforce that near_buy mid should not be too far away from current (max_buy_distance)
-    mid = (near_buy_lo + near_buy_hi) / 2
-    dist = abs((close / mid) - 1.0) if mid > 0 else 999
-
-    if dist > max_buy_distance and not in_near and not in_deep:
-        action = "WATCH"
-        reason = "買區距離過遠（已超過可接受距離門檻），等待回檔或重新形成區間。"
-    else:
-        if in_deep and oversold:
-            action = "BUY"
-            reason = "進入深回檔價值區 + 超賣條件成立，適合分批布局。"
-        elif in_near and (oversold or macd_turn):
-            action = "BUY"
-            reason = "進入近端買區 + 指標出現超賣/動能改善，具可操作性。"
-        else:
-            action = "WATCH"
-            reason = "條件尚未明確，等待價格進入買區或指標翻轉確認。"
-
-    return {
-        "strategy": "回檔等待型（分批）",
-        "action": action,
-        "reason": reason,
-        "zones": zones,
-    }
-
-
-def strategy_breakout(df: pd.DataFrame, chase_max: float, breakout_atr_buffer: float, stop_atr: float, rr: float) -> Dict[str, Any]:
-    """
-    趨勢突破型（突破追價進場）：突破 + 跟隨，控制追價距離
-    """
-    zones = compute_trade_zones(df)
-    latest = df.iloc[-1]
-    close = zones["close"]
-    atr14 = zones["atr"]
-
-    # breakout reference: recent 20-day high or BB upper
-    look = min(60, len(df))
-    recent = df.iloc[-look:]
-    high20 = float(recent["High"].rolling(20).max().iloc[-1]) if len(recent) >= 20 else float(recent["High"].max())
-    bb_up = zones["bb_up"]
-    ref = np.nanmax([high20, bb_up]) if not (np.isnan(high20) and np.isnan(bb_up)) else high20
-
-    buffer = (atr14 * breakout_atr_buffer) if (pd.notna(atr14) and atr14 > 0) else (close * 0.01)
-    trigger = ref + buffer
-
-    # chase distance: how far above trigger
-    chase_dist = (close / trigger) - 1.0 if trigger > 0 else 999
-
-    macd_ok = pd.notna(latest.get("MACD")) and pd.notna(latest.get("MACD_SIGNAL")) and latest["MACD"] > latest["MACD_SIGNAL"]
-    vol_ok = pd.notna(latest.get("Volume")) and pd.notna(latest.get("VOL_SMA20")) and (latest["Volume"] >= latest["VOL_SMA20"])
-
-    if close >= trigger and chase_dist <= chase_max and (macd_ok or vol_ok):
-        action = "BUY"
-        reason = "突破觸發價成立 + 追價距離在可控範圍內（且動能/量能至少一項確認）。"
-    elif close >= trigger and chase_dist > chase_max:
-        action = "WATCH"
-        reason = "已突破但追價距離過大（風險不對稱），等待回測不破或重新給進場點。"
-    else:
-        action = "WATCH"
-        reason = "尚未突破觸發價，等待突破成立或回測結構。"
-
-    # risk plan (if breakout entry)
-    if pd.notna(atr14) and atr14 > 0:
-        stop = close - atr14 * stop_atr
-    else:
-        stop = close * 0.97
-    target = close + (close - stop) * rr
-
-    return {
-        "strategy": "趨勢突破型（突破追價進場）",
-        "action": action,
-        "reason": reason,
-        "trigger": trigger,
-        "chase_dist": chase_dist,
-        "stop": stop,
-        "target": target,
-        "zones": zones,
-    }
-
+    score += 16 if flags["price_above_ema20"] else 0
+    score += 10 if flags["ema20_above_sma60"] else 0
+    score += 14 if flags["macd_bull"] else 0
+    score += 10 if flags["macd_hist_up"] else 0
+    score += 10 if flags["kd_bull"] else 0
+    score += 14 if flags["vol_up"] else 0
+    score += 12 if flags["rsi_ok"] else 0
+    score += 10 if flags["break_bb_upper"] else 0
+    score -= 12 if flags["rsi_overbought"] else 0
+    return int(np.clip(score, 0, 100)), flags
 
 # -----------------------------
-# Visualization (Matplotlib)
+# Data Sources
 # -----------------------------
-def plot_bollinger(df: pd.DataFrame, title: str):
-    fig, ax = plt.subplots(figsize=(11, 5))
-    x = df.index
-    ax.plot(x, df["Close"], linewidth=1.6, label="Close")
-    if "BB_MID" in df.columns:
-        ax.plot(x, df["BB_MID"], linewidth=1.0, label="BB Mid (SMA20)")
-    if "BB_UP" in df.columns and "BB_LOW" in df.columns:
-        ax.plot(x, df["BB_UP"], linewidth=1.0, label="BB Upper")
-        ax.plot(x, df["BB_LOW"], linewidth=1.0, label="BB Lower")
-        ax.fill_between(x, df["BB_LOW"].values, df["BB_UP"].values, alpha=0.12)
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_yfinance(code: str, period_days: int) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
+    if yf is None:
+        return None, FetchAttempt("YF", "", "NO_MODULE", note="yfinance not installed (check requirements.txt)")
+    tickers = [code] if (code.endswith(".TW") or code.endswith(".TWO")) else [f"{code}.TW", f"{code}.TWO"]
+    end = datetime.utcnow().date()
+    start = end - timedelta(days=period_days + 10)
+    last_note = ""
+    for t in tickers:
+        try:
+            df = yf.download(t, start=str(start), end=str(end), progress=False, auto_adjust=False, threads=False)
+            if df is None or df.empty:
+                last_note = "empty"
+                continue
+            df = df.reset_index()
+            df = _normalize_ohlcv(df)
+            return df, FetchAttempt("YF", f"yfinance:{t}", "OK", note=f"rows={len(df)}")
+        except Exception as e:
+            last_note = str(e)
+            continue
+    return None, FetchAttempt("YF", "yfinance", "FAIL", note=last_note or "download failed")
 
-    if "EMA20" in df.columns:
-        ax.plot(x, df["EMA20"], linewidth=1.0, label="EMA20", linestyle="--")
-    if "SMA20" in df.columns:
-        ax.plot(x, df["SMA20"], linewidth=1.0, label="SMA20", linestyle=":")
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_twse_json(code: str, months_back: int) -> Tuple[Optional[pd.DataFrame], List[FetchAttempt]]:
+    """
+    TWSE JSON：
+    https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?response=json&date=YYYYMMDD&stockNo=2330
+    """
+    attempts: List[FetchAttempt] = []
+    frames = []
+    today = datetime.now()
+    for m in range(months_back):
+        dt = (today.replace(day=1) - pd.DateOffset(months=m)).to_pydatetime()
+        ymd = _yyyymmdd(dt)
+        url = f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?response=json&date={ymd}&stockNo={code}"
+        r, err, preview = _requests_get(url)  # 使用加強版重試請求
+        if r is None:
+            attempts.append(FetchAttempt("TWSE_JSON", url, "EXC", note=err or "request failed", preview=preview))
+            continue
+        text = r.text or ""
+        if r.status_code != 200:
+            attempts.append(FetchAttempt("TWSE_JSON", url, "HTTP_ERR", http=r.status_code, bytes=len(text), preview=preview))
+            continue
+        # WAF 常回 HTML
+        if "<html" in text.lower():
+            attempts.append(FetchAttempt("TWSE_JSON", url, "WAF_HTML", http=200, bytes=len(text), preview=preview))
+            continue
+        try:
+            j = r.json()
+            data = j.get("data", [])
+            fields = j.get("fields", [])
+            if not data or not fields:
+                attempts.append(FetchAttempt("TWSE_JSON", url, "NO_DATA", http=200, bytes=len(text), preview=preview))
+                continue
+            dfm = pd.DataFrame(data, columns=fields)
+            col_date = "日期"
+            col_open = "開盤價"
+            col_high = "最高價"
+            col_low = "最低價"
+            col_close = "收盤價"
+            col_vol = "成交股數" if "成交股數" in dfm.columns else ("成交量" if "成交量" in dfm.columns else None)
+            def parse_roc(s: str) -> datetime:
+                p = str(s).strip().split("/")
+                y = int(p[0]) + 1911
+                return datetime(y, int(p[1]), int(p[2]))
+            out = pd.DataFrame({
+                "Date": dfm[col_date].map(parse_roc),
+                "Open": dfm[col_open].map(_safe_float) if col_open in dfm.columns else None,
+                "High": dfm[col_high].map(_safe_float) if col_high in dfm.columns else None,
+                "Low": dfm[col_low].map(_safe_float) if col_low in dfm.columns else None,
+                "Close": dfm[col_close].map(_safe_float),
+                "Volume": dfm[col_vol].map(_safe_float) if col_vol and col_vol in dfm.columns else None,
+            }).dropna(subset=["Close"])
+            out = _normalize_ohlcv(out)
+            frames.append(out)
+            attempts.append(FetchAttempt("TWSE_JSON", url, "OK", http=200, bytes=len(text), note=f"rows={len(out)}"))
+        except Exception as e:
+            attempts.append(FetchAttempt("TWSE_JSON", url, "PARSE_ERR", http=200, bytes=len(text), note=str(e), preview=preview))
+    if not frames:
+        return None, attempts
+    df = pd.concat(frames).sort_index()
+    df = df[~df.index.duplicated(keep="last")]
+    return df, attempts
 
-    ax.set_title(title)
-    ax.grid(True, alpha=0.25)
-    ax.legend(loc="upper left", fontsize=9)
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_tpex_json(code: str, months_back: int) -> Tuple[Optional[pd.DataFrame], List[FetchAttempt]]:
+    """
+    ✅ 重點修正：TPEX 改用 JSON（不靠 read_html）
+    TPEX JSON：
+    https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&o=json&d=114/02&stkno=6274
+    """
+    attempts: List[FetchAttempt] = []
+    frames = []
+    today = datetime.now().replace(day=1)
+    for m in range(months_back):
+        dt = (today - pd.DateOffset(months=m)).to_pydatetime()
+        roc_y = dt.year - 1911
+        d_param = f"{roc_y}/{dt.month:02d}"
+        url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&o=json&d={d_param}&stkno={code}"
+        r, err, preview = _requests_get(url)  # 使用加強版重試請求
+        if r is None:
+            attempts.append(FetchAttempt("TPEX_JSON", url, "EXC", note=err or "request failed", preview=preview))
+            continue
+        text = r.text or ""
+        if r.status_code != 200:
+            attempts.append(FetchAttempt("TPEX_JSON", url, "HTTP_ERR", http=r.status_code, bytes=len(text), preview=preview))
+            continue
+        if "<html" in text.lower():
+            attempts.append(FetchAttempt("TPEX_JSON", url, "WAF_HTML", http=200, bytes=len(text), preview=preview))
+            continue
+        try:
+            j = r.json()
+            # 常見：aaData 或 dataArray 或 table
+            data = j.get("aaData") or j.get("data") or j.get("dataArray") or []
+            if not data:
+                attempts.append(FetchAttempt("TPEX_JSON", url, "NO_DATA", http=200, bytes=len(text), preview=preview))
+                continue
+            # TPEX st43 常見欄位順序（可能版本差異）
+            # 0 日期 1 成交股數 2 成交金額 3 開盤 4 最高 5 最低 6 收盤 7 漲跌 8 成交筆數
+            rows = []
+            for row in data:
+                if not row or len(row) < 7:
+                    continue
+                date_s = str(row[0]).strip()  # 114/02/27
+                p = date_s.split("/")
+                y = int(p[0]) + 1911
+                d = datetime(y, int(p[1]), int(p[2]))
+                rows.append({
+                    "Date": d,
+                    "Open": _safe_float(row[3]),
+                    "High": _safe_float(row[4]),
+                    "Low": _safe_float(row[5]),
+                    "Close": _safe_float(row[6]),
+                    "Volume": _safe_float(row[1]),
+                })
+            out = pd.DataFrame(rows).dropna(subset=["Close"])
+            out = _normalize_ohlcv(out)
+            frames.append(out)
+            attempts.append(FetchAttempt("TPEX_JSON", url, "OK", http=200, bytes=len(text), note=f"rows={len(out)}"))
+        except Exception as e:
+            attempts.append(FetchAttempt("TPEX_JSON", url, "PARSE_ERR", http=200, bytes=len(text), note=str(e), preview=preview))
+    if not frames:
+        return None, attempts
+    df = pd.concat(frames).sort_index()
+    df = df[~df.index.duplicated(keep="last")]
+    return df, attempts
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_stooq(code: str, period_days: int) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
+    if pdr is None:
+        return None, FetchAttempt("STOOQ", "", "NO_MODULE", note="pandas_datareader not installed (check requirements.txt)")
+    candidates = [f"{code}.TW", f"{code}.TWO", code]
+    end = datetime.utcnow().date()
+    start = end - timedelta(days=period_days + 10)
+    last_note = ""
+    for sym in candidates:
+        try:
+            df = pdr.DataReader(sym, "stooq", start, end)
+            if df is None or df.empty:
+                last_note = "empty"
+                continue
+            df = df.reset_index()
+            df = _normalize_ohlcv(df)
+            return df, FetchAttempt("STOOQ", f"stooq:{sym}", "OK", note=f"rows={len(df)}")
+        except Exception as e:
+            last_note = str(e)
+            continue
+    return None, FetchAttempt("STOOQ", "stooq", "FAIL", note=last_note or "download failed")
+
+def _load_csv_fallback(uploaded_file) -> Tuple[Optional[pd.DataFrame], FetchAttempt]:
+    """
+    最終備援：你自己上傳 export.csv
+    允許欄位名：Date/日期 + Open High Low Close Volume（或 close/volume）
+    """
+    try:
+        df = pd.read_csv(uploaded_file)
+        # try rename common chinese headers
+        rename_map = {}
+        for c in df.columns:
+            cc = str(c).strip().lower()
+            if cc in ["date", "日期"]:
+                rename_map[c] = "Date"
+            elif cc in ["open", "開盤價", "開盤"]:
+                rename_map[c] = "Open"
+            elif cc in ["high", "最高價", "最高"]:
+                rename_map[c] = "High"
+            elif cc in ["low", "最低價", "最低"]:
+                rename_map[c] = "Low"
+            elif cc in ["close", "收盤價", "收盤"]:
+                rename_map[c] = "Close"
+            elif cc in ["volume", "成交量", "成交股數"]:
+                rename_map[c] = "Volume"
+        df = df.rename(columns=rename_map)
+        if "Date" not in df.columns or "Close" not in df.columns:
+            return None, FetchAttempt("CSV_UPLOAD", "uploaded", "SCHEMA_MISS", note=f"columns={list(df.columns)[:12]}")
+        df = _normalize_ohlcv(df)
+        return df, FetchAttempt("CSV_UPLOAD", "uploaded", "OK", note=f"rows={len(df)}")
+    except Exception as e:
+        return None, FetchAttempt("CSV_UPLOAD", "uploaded", "PARSE_ERR", note=str(e))
+
+def fetch_ohlcv_multi(code: str, months_back: int, csv_upload=None) -> Tuple[Optional[pd.DataFrame], str, List[FetchAttempt]]:
+    """
+    取得順序（更穩）：
+    1) TWSE_JSON
+    2) TPEX_JSON   ✅ 這次修正重點
+    3) YF
+    4) STOOQ
+    5) CSV_UPLOAD  ✅ 最後救命
+    """
+    period_days = int(months_back * 31)
+    attempts: List[FetchAttempt] = []
+    # 1) TWSE JSON
+    df1, att1 = fetch_twse_json(code, months_back)
+    attempts += att1
+    if df1 is not None and len(df1) >= 30:
+        return df1, "TWSE_JSON", attempts
+    # 2) TPEX JSON
+    df2, att2 = fetch_tpex_json(code, months_back)
+    attempts += att2
+    if df2 is not None and len(df2) >= 30:
+        return df2, "TPEX_JSON", attempts
+    # 3) Yahoo
+    df3, att3 = fetch_yfinance(code, period_days)
+    attempts.append(att3)
+    if df3 is not None and len(df3) >= 30:
+        return df3, "YF", attempts
+    # 4) Stooq
+    df4, att4 = fetch_stooq(code, period_days)
+    attempts.append(att4)
+    if df4 is not None and len(df4) >= 30:
+        return df4, "STOOQ", attempts
+    # 5) Upload CSV fallback
+    if csv_upload is not None:
+        df5, att5 = _load_csv_fallback(csv_upload)
+        attempts.append(att5)
+        if df5 is not None and len(df5) >= 30:
+            return df5, "CSV_UPLOAD", attempts
+    return None, "NONE", attempts
+
+# -----------------------------
+# Breakout Plan (Trend breakout)
+# -----------------------------
+def support_resistance(df: pd.DataFrame, lookback: int = 60) -> Tuple[float, float]:
+    d = df.tail(lookback)
+    sup = float(np.nanmin(d["Low"].values))
+    res = float(np.nanmax(d["High"].values))
+    return sup, res
+
+def professional_distance(current: float, ref: float, atr_v: float, max_chase_pct: float) -> Dict[str, str]:
+    if ref <= 0 or current <= 0:
+        return {"pct": "N/A", "atr": "N/A", "eff": "N/A"}
+    dist_pct = (current - ref) / ref
+    dist_atr = (current - ref) / atr_v if atr_v and atr_v > 0 else np.nan
+    denom = max(max_chase_pct, 1e-6)
+    eff = 1 - (abs(dist_pct) / denom)
+    eff = float(np.clip(eff, 0, 1))
+    # 專業說法：Premium/Discount + ATR distance + efficiency
+    if dist_pct >= 0:
+        pct_text = f"Premium {dist_pct*100:.2f}%（相對觸發價溢價）"
+    else:
+        pct_text = f"Discount {abs(dist_pct)*100:.2f}%（相對觸發價折價）"
+    atr_text = f"{dist_atr:+.2f} ATR（標準化距離）" if not np.isnan(dist_atr) else "N/A"
+    eff_text = f"{eff*100:.0f}/100（Entry Efficiency）"
+    return {"pct": pct_text, "atr": atr_text, "eff": eff_text}
+
+def build_breakout_plan(
+    df: pd.DataFrame,
+    max_chase_pct: float,
+    trigger_buffer_atr: float,
+    stop_atr_mult: float,
+    target_rr: float,
+) -> Dict[str, Dict]:
+    last = df.iloc[-1]
+    close = float(last["Close"])
+    atr_v = float(last["ATR14"]) if pd.notna(last["ATR14"]) else np.nan
+    sup, res = support_resistance(df, lookback=60)
+    bb_u = float(last["BB_U"]) if pd.notna(last["BB_U"]) else np.nan
+    bb_m = float(last["BB_M"]) if pd.notna(last["BB_M"]) else close
+    ema20_v = float(last["EMA20"]) if pd.notna(last["EMA20"]) else close
+    if np.isnan(atr_v) or atr_v <= 0:
+        atr_v = max(1e-6, close * 0.02)
+    trigger = res + (trigger_buffer_atr * atr_v)
+    # pullback zone
+    pb_center = max(ema20_v, bb_m)
+    pb_low = pb_center - 0.6 * atr_v
+    pb_high = pb_center + 0.2 * atr_v
+    stop = min(pb_low, trigger) - (stop_atr_mult * atr_v)
+    entry_ref = min(trigger, close * (1 + max_chase_pct))  # realistic reference entry
+    risk = max(entry_ref - stop, 0.01)
+    target = entry_ref + risk * target_rr
+    if not np.isnan(bb_u) and bb_u > 0:
+        target = max(target, bb_u)
+    return {
+        "trigger": {"price": float(trigger)},
+        "pullback": {"low": float(pb_low), "high": float(pb_high), "center": float(pb_center)},
+        "risk": {"entry_ref": float(entry_ref), "stop": float(stop), "target": float(target), "atr": float(atr_v)},
+        "sr": {"support": float(sup), "resistance": float(res)},
+    }
+
+def breakout_action(df: pd.DataFrame, flags: Dict[str, bool], plan: Dict, max_chase_pct: float) -> Tuple[str, str]:
+    """
+    ✅ 你指定：突破追價進場（優先）
+    條件更貼近實戰：突破觸發價 + 動能至少一項成立（MACD/KD/量能其一）
+    """
+    last = df.iloc[-1]
+    close = float(last["Close"])
+    trigger = plan["trigger"]["price"]
+    pb = plan["pullback"]
+    chase_dist = (close - trigger) / trigger if trigger > 0 else 999
+    is_breaking = close >= trigger
+    is_in_pullback = (pb["low"] <= close <= pb["high"])
+    momentum_ok = flags.get("macd_bull", False) or flags.get("kd_bull", False) or flags.get("vol_up", False)
+    if is_breaking and momentum_ok:
+        if chase_dist <= max_chase_pct:
+            return "BUY", "追突破：價格站上突破觸發價，且動能條件成立（MACD/KD/量能至少一項），可分批進場並嚴守失效點。"
+        return "WATCH", "突破成立但追價距離過大：不追高，等待回測不破（Pullback）再進場。"
+    if is_in_pullback and (flags.get("macd_hist_up", True) or flags.get("kd_bull", False)):
+        return "BUY", "回測買點：突破後回測區間內止跌，動能未破（屬『回測不破』二次進場）。"
+    if flags.get("rsi_overbought", False) and (not flags.get("macd_hist_up", True)):
+        return "SELL", "過熱轉弱：RSI 過熱且動能減弱（可分批減碼/停利）。"
+    return "WATCH", "觀望：等待『突破觸發』或『突破後回測』條件成形。"
+
+# -----------------------------
+# Position Sizing
+# -----------------------------
+def position_sizing(
+    account_ntd: float,
+    entry: float,
+    stop: float,
+    max_position_pct: float,
+    risk_pct: float,
+) -> Dict[str, float]:
+    capital = float(account_ntd)
+    risk_amt = capital * risk_pct
+    max_pos_amt = capital * max_position_pct
+    per_share_risk = max(entry - stop, 0.0)
+    if per_share_risk <= 0:
+        return {"risk_amt": risk_amt, "per_share_risk": per_share_risk, "shares": 0.0, "pos_value": 0.0, "pos_pct": 0.0}
+    shares_by_risk = risk_amt / per_share_risk
+    shares_by_cap = max_pos_amt / entry if entry > 0 else 0.0
+    shares = max(0.0, min(shares_by_risk, shares_by_cap))
+    shares_int = math.floor(shares)
+    pos_value = shares_int * entry
+    pos_pct = pos_value / capital if capital > 0 else 0.0
+    return {"risk_amt": risk_amt, "per_share_risk": per_share_risk, "shares": float(shares_int), "pos_value": float(pos_value), "pos_pct": float(pos_pct)}
+
+# -----------------------------
+# Charts (matplotlib)
+# -----------------------------
+def plot_bollinger(df: pd.DataFrame, code: str):
+    d = df.tail(180).copy()
+    fig = plt.figure(figsize=(12, 5.2), dpi=140)
+    ax = fig.add_subplot(1, 1, 1)
+    ax.plot(d.index, d["Close"], linewidth=1.2, label="Close")
+    ax.plot(d.index, d["BB_M"], linewidth=1.0, label="BB Mid (SMA20)")
+    ax.plot(d.index, d["BB_U"], linewidth=1.0, label="BB Upper")
+    ax.plot(d.index, d["BB_L"], linewidth=1.0, label="BB Lower")
+    ax.fill_between(d.index, d["BB_L"].values, d["BB_U"].values, alpha=0.12)
+    ax.set_title(f"{code} 布林通道（近 180 根）")
+    ax.grid(True, alpha=0.2)
+    ax.legend(loc="upper left")
+    fig.tight_layout()
     st.pyplot(fig)
 
-
 # -----------------------------
-# Main fetch orchestration
-# -----------------------------
-def fetch_with_fallback(ticker: str, period: str, uploaded_csv: Optional[Any]) -> Tuple[pd.DataFrame, str, List[FetchDiag]]:
-    """
-    Returns df, source_name, diagnostics
-    """
-    diags: List[FetchDiag] = []
-    t = normalize_ticker_input(ticker)
-    if not t:
-        return pd.DataFrame(), "N/A", [FetchDiag(source="INPUT", result="EMPTY", url="", reason="Empty ticker")]
-
-    # 0) CSV uploaded overrides if provided
-    if uploaded_csv is not None:
-        df_csv = parse_uploaded_csv(uploaded_csv)
-        if not df_csv.empty:
-            diags.append(FetchDiag(source="UPLOAD_CSV", result="OK", url="uploaded", status=200, reason=f"rows={len(df_csv)}"))
-            return df_csv, "UPLOAD_CSV", diags
-        else:
-            diags.append(FetchDiag(source="UPLOAD_CSV", result="FAIL", url="uploaded", reason="CSV parsed empty or missing columns"))
-
-    # 1) yfinance (try .TW then .TWO)
-    for sym in candidate_symbols(t):
-        df_yf, d = fetch_yfinance(sym, period)
-        diags.extend(d)
-        if not df_yf.empty:
-            return df_yf, f"YF:{sym}", diags
-
-    # 2) stooq
-    for sym in candidate_symbols(t):
-        df_sq, d = fetch_stooq(sym, period)
-        diags.extend(d)
-        if not df_sq.empty:
-            return df_sq, f"STOOQ:{sym}", diags
-
-    # If ticker numeric, try TWSE/TPEX official
-    if t.isdigit():
-        # 3) TWSE
-        df_twse, d1 = fetch_twse_monthly(t, period)
-        diags.extend(d1)
-        if not df_twse.empty:
-            return df_twse, "TWSE_OFFICIAL", diags
-
-        # 4) TPEX
-        df_tpex, d2 = fetch_tpex_monthly(t, period)
-        diags.extend(d2)
-        if not df_tpex.empty:
-            return df_tpex, "TPEX_OFFICIAL", diags
-
-    return pd.DataFrame(), "ALL_FAILED", diags
-
-
-# -----------------------------
-# Sidebar controls
+# UI: Sidebar
 # -----------------------------
 with st.sidebar:
-    st.header("設定")
-
+    st.subheader("⚙️ 系統狀態")
+    # 顯示依賴套件狀態
+    for pkg, status in DEPENDENCIES.items():
+        if status:
+            st.success(f"✅ {pkg}")
+        else:
+            st.error(f"❌ {pkg} 缺失 (請更新 requirements.txt)")
+    
+    st.divider()
+    st.subheader("設定")
     mode = st.radio("選擇模式", ["單一股票分析", "Top 10 掃描器"], index=0)
-
-    period = st.selectbox("資料期間", ["3mo", "6mo", "1y", "2y", "5y"], index=1)
-
+    months_map = {"3mo": 3, "6mo": 6, "1y": 12}
+    period_label = st.selectbox("資料期間", list(months_map.keys()), index=1)
+    months_back = months_map[period_label]
     debug = st.checkbox("顯示下載除錯資訊（Debug）", value=False)
-
     st.divider()
-    st.subheader("策略 / 參數")
+    st.subheader("策略：趨勢突破型（突破追價進場）")
+    max_chase_pct = st.slider("最大可接受追價距離（%）", 0.02, 0.18, 0.06, 0.01)
+    trigger_buffer_atr = st.slider("突破觸發 buffer（ATR 倍數）", 0.0, 0.8, 0.2, 0.05)
+    stop_atr_mult = st.slider("失效止損距離（ATR 倍數）", 0.8, 3.0, 1.6, 0.1)
+    target_rr = st.slider("目標風險報酬（RR）", 1.2, 5.0, 2.2, 0.1)
+    st.divider()
+    st.subheader("資金 500–1000萬（倉位）")
+    account_ntd = st.slider("資金規模（NTD）", 5_000_000, 10_000_000, 7_000_000, step=100_000)
+    risk_pct = st.slider("每筆最大風險（% of 資金）", 0.2, 2.0, 0.8, 0.1) / 100.0
+    max_position_pct = st.slider("單筆最大持倉（% of 資金）", 5.0, 40.0, 20.0, 1.0) / 100.0
+    st.divider()
+    st.subheader("最後救命：CSV 上傳備援")
+    csv_upload = st.file_uploader("上傳日線 CSV（export.csv 也可以）", type=["csv"])
 
-    strategy_choice = st.radio(
-        "策略",
-        ["回檔等待型（回檔分批）", "趨勢突破型（突破追價進場）"],
-        index=0,
+# -----------------------------
+# Diagnostics Renderer
+# -----------------------------
+def render_diagnostics(attempts: List[FetchAttempt]):
+    if not attempts:
+        return
+    df = pd.DataFrame([{
+        "source": a.source,
+        "result": a.status,
+        "http": a.http,
+        "bytes": a.bytes,
+        "url": a.url,
+        "note": a.note,
+        "preview": a.preview
+    } for a in attempts])
+    st.markdown("### 🧩 逐路診斷（哪一路失敗、為什麼）")
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+# -----------------------------
+# Main: Single Analysis
+# -----------------------------
+def analyze_one(code: str):
+    code = str(code).strip().upper().replace(" ", "")
+    if not code:
+        st.warning("請輸入股票代號（例如：2330 / 2317 / 6274）")
+        return
+    df, src, attempts = fetch_ohlcv_multi(code, months_back=months_back, csv_upload=csv_upload)
+    # 如果抓不到，強制顯示診斷（就算你沒勾 debug 也給你看）
+    if (df is None or df.empty) and attempts:
+        render_diagnostics(attempts)
+    if debug and attempts:
+        render_diagnostics(attempts)
+    if df is None or df.empty:
+        st.error("❌ 無法取得資料（所有備援來源都失敗）。")
+        st.info("✅ 解法：把你手上 export.csv 上傳（左側 CSV 上傳備援），馬上就能操作。")
+        return
+    df = compute_signals(df)
+    last = df.iloc[-1]
+    score, flags = confluence_score(last)
+    plan = build_breakout_plan(
+        df=df,
+        max_chase_pct=max_chase_pct,
+        trigger_buffer_atr=trigger_buffer_atr,
+        stop_atr_mult=stop_atr_mult,
+        target_rr=target_rr,
     )
-
-    if strategy_choice.startswith("回檔"):
-        max_buy_distance = st.slider(
-            "可操作買點最大距離（避免買點離現實太遠） max_buy_distance",
-            min_value=0.03, max_value=0.25, value=0.12, step=0.01,
-        )
-        chase_max = None
-        breakout_atr_buffer = None
-        stop_atr = None
-        rr = None
-    else:
-        chase_max = st.slider(
-            "最大可接受追價/偏離距離（%）",
-            min_value=0.02, max_value=0.20, value=0.06, step=0.01,
-        )
-        breakout_atr_buffer = st.slider(
-            "突破觸發 buffer（ATR 倍數）",
-            min_value=0.00, max_value=1.50, value=0.20, step=0.05,
-        )
-        stop_atr = st.slider(
-            "失效止損距離（ATR 倍數）",
-            min_value=0.80, max_value=4.00, value=1.60, step=0.10,
-        )
-        rr = st.slider(
-            "目標風險報酬（RR）",
-            min_value=1.0, max_value=5.0, value=2.2, step=0.1,
-        )
-        max_buy_distance = None
-
-    st.divider()
-    st.subheader("備援 / 測試")
-    network_test = st.button("🧪 網路測試（建議先按一次）")
-
-    st.caption("提示：若 Cloud 偶發抓不到資料，可先按「網路測試」，或直接上傳 export.csv 立即可用。")
-
-
-# -----------------------------
-# Network test
-# -----------------------------
-if network_test:
-    st.info("正在測試連線…（TWSE / TPEX / Yahoo）")
-    get = make_retry_session(timeout_sec=6, max_tries=2, backoff_sec=0.5)
-
-    test_urls = [
-        ("TWSE", "https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=20250101&stockNo=2330"),
-        ("TPEX", "https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw&d=114/01/02&stkno=6274&response=json"),
-        ("YAHOO", "https://query1.finance.yahoo.com/v7/finance/quote?symbols=2330.TW"),
-    ]
-
-    rows = []
-    for name, url in test_urls:
-        resp, d = get(url)
-        if resp is None:
-            rows.append([name, "FAIL", None, "no response", ""])
-        else:
-            txt = resp.text or ""
-            if is_html_text(txt):
-                rows.append([name, "WAF_HTML", resp.status_code, "HTML/WAF returned", compact_preview(txt)])
-            else:
-                rows.append([name, "OK", resp.status_code, "reachable", compact_preview(txt)])
-    st.dataframe(pd.DataFrame(rows, columns=["target", "result", "status", "reason", "preview"]))
-
-
-# -----------------------------
-# Input + CSV upload
-# -----------------------------
-colA, colB = st.columns([2, 3], gap="large")
-
-with colA:
-    ticker = st.text_input("請輸入股票代號", value="6274")
-    uploaded = st.file_uploader("（選用）上傳 export.csv 作為備援資料源", type=["csv"])
-
-with colB:
-    st.info("若 Cloud 偶發抓不到資料：\n- 先按左側「網路測試」\n- 或直接上傳 export.csv（Date/Open/High/Low/Close/Volume）即可完整分析", icon="💡")
-
-
-# -----------------------------
-# Single stock analysis
-# -----------------------------
-def render_single_stock():
-    df, src, diags = fetch_with_fallback(ticker, period, uploaded)
-
-    if df.empty:
-        st.error("❌ 無法取得資料（所有備援來源都失敗）。請稍後再試、或改用 CSV 上傳備援。")
-        if debug and diags:
-            st.subheader("🧩 逐路診斷（哪一路失敗、為什麼）")
-            st.dataframe(pd.DataFrame([d.__dict__ for d in diags]))
-        # Missing pkg hints (quick)
-        missing = [d for d in diags if d.result == "MISSING_PKG"]
-        if missing:
-            st.warning("你目前 Cloud 環境缺套件，請把下列套件加入 requirements.txt：\n" +
-                       "\n".join({m.reason for m in missing}))
-        return
-
-    df = add_indicators(df)
-    latest = df.iloc[-1]
-    current = float(latest["Close"])
-    score = resonance_score(latest)
-    last_date = df.index[-1].date().isoformat()
-
-    # Strategy decision
-    if strategy_choice.startswith("回檔"):
-        out = strategy_pullback(df, max_buy_distance=max_buy_distance or 0.12)
-    else:
-        out = strategy_breakout(
-            df,
-            chase_max=chase_max or 0.06,
-            breakout_atr_buffer=breakout_atr_buffer or 0.20,
-            stop_atr=stop_atr or 1.60,
-            rr=rr or 2.2
-        )
-
-    action = out["action"]
-    reason = out["reason"]
-    zones = out["zones"]
-
-    # Header metrics
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("目前價格", f"{current:.2f}")
-    m2.metric("AI 共振分數", f"{score}/100")
-    m3.metric("資料來源", src)
-    m4.metric("最後日期 / 筆數", f"{last_date} / {len(df)}")
-
-    st.subheader("📌 當下是否為買點/賣點？（可操作判斷）")
+    action, reason = breakout_action(df, flags, plan, max_chase_pct=max_chase_pct)
+    # headline metrics
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("目前價格", f"{float(last['Close']):,.2f}")
+    c2.metric("AI 共振分數", f"{score}/100")
+    c3.metric("資料來源", src)
+    c4.metric("最後日期/筆數", f"{df.index[-1].date()} / {len(df)}")
+    st.markdown("## 📌 當下是否可操作？（突破追價進場）")
     if action == "BUY":
-        st.success(f"✅ BUY：{reason}")
+        st.success(f"🟢 **BUY / 可操作**：{reason}")
     elif action == "SELL":
-        st.error(f"🔻 SELL：{reason}")
+        st.warning(f"🟠 **SELL / 可操作**：{reason}")
     else:
-        st.info(f"⏳ WATCH：{reason}")
-
-    # Zones with professional distance
-    st.subheader("🗺️ 未來預估買賣點（區間 + 專業距離描述）")
-
-    nb1, nb2 = zones["near_buy"]
-    db1, db2 = zones["deep_buy"]
-    ns1, ns2 = zones["near_sell"]
-    es1, es2 = zones["ext_sell"]
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.success(
-            f"🟢 近端買點（可操作）: {nb1:.2f} ~ {nb2:.2f}\n\n"
-            f"• {professional_distance_label(current, nb1, nb2)}"
-        )
-        st.info(
-            f"🟦 深回檔買點（等待型）: {db1:.2f} ~ {db2:.2f}\n\n"
-            f"• {professional_distance_label(current, db1, db2)}"
-        )
-
-    with c2:
-        st.warning(
-            f"🟨 近端賣點區（壓力/獲利）: {ns1:.2f} ~ {ns2:.2f}\n\n"
-            f"• {professional_distance_label(current, ns1, ns2)}"
-        )
-        st.warning(
-            f"🟥 延伸賣點區（強勢延伸）: {es1:.2f} ~ {es2:.2f}\n\n"
-            f"• {professional_distance_label(current, es1, es2)}"
-        )
-
-    # Breakout plan
-    if "trigger" in out:
-        st.subheader("🚀 趨勢突破型：交易計畫（不自動下單）")
-        trig = out["trigger"]
-        chase_d = out["chase_dist"]
-        stop_ = out["stop"]
-        target_ = out["target"]
-        st.write(
-            f"- 突破觸發價（含 buffer）: **{trig:.2f}**\n"
-            f"- 現價相對觸發偏離: **{chase_d*100:.2f}%**（越大越偏追價）\n"
-            f"- 失效止損（ATR-based）: **{stop_:.2f}**\n"
-            f"- 目標價（RR={rr or 2.2:.1f}）: **{target_:.2f}**"
-        )
-
-    st.subheader("📈 布林通道走勢圖（視覺判讀）")
-    plot_bollinger(df, f"{ticker} | {src} | Bollinger + SMA/EMA")
-
-    # Indicator snapshot
-    st.subheader("🧾 指標快照（最新一根）")
-    snap_cols = ["Close", "SMA20", "EMA20", "RSI14", "MACD", "MACD_SIGNAL", "K", "D", "ATR14", "BB_LOW", "BB_MID", "BB_UP", "Volume", "VOL_SMA20"]
-    snap = latest.reindex(snap_cols).to_frame("value")
-    st.dataframe(snap)
-
-    if debug and diags:
-        st.subheader("🧩 逐路診斷（哪一路失敗、為什麼）")
-        st.dataframe(pd.DataFrame([d.__dict__ for d in diags]))
-
-    # Missing pkg hints
-    missing = [d for d in diags if d.result == "MISSING_PKG"]
-    if missing:
-        st.warning(
-            "你目前 Cloud 環境缺套件，請把下列套件加入 requirements.txt：\n\n"
-            + "\n".join(sorted({m.reason for m in missing}))
-        )
-
+        st.info(f"🕒 **WATCH / 觀望**：{reason}")
+    close = float(last["Close"])
+    atr_v = float(plan["risk"]["atr"])
+    trigger = float(plan["trigger"]["price"])
+    pb = plan["pullback"]
+    risk = plan["risk"]
+    st.markdown("## 🧭 突破交易計畫（專業描述）")
+    dist = professional_distance(close, trigger, atr_v, max_chase_pct)
+    st.markdown(
+        f"""
+        **① Breakout Trigger（突破觸發價）**：**{trigger:,.2f}**
+        • 估值距離：**{dist['pct']}**｜**{dist['atr']}**｜**{dist['eff']}**
+        • 追價控管：追價距離 > **{max_chase_pct*100:.0f}%** → 不追高，等 Pullback
+        **② Pullback Buy（回測買點區）**：**{pb['low']:,.2f} – {pb['high']:,.2f}**（中心：{pb['center']:,.2f}）
+        **③ Invalidation（失效止損）**：**{risk['stop']:,.2f}**
+        **④ Targets（目標價）**：**{risk['target']:,.2f}**（RR≈{target_rr:.1f}）
+        """
+    )
+    st.markdown("## 🧮 倉位建議（500–1000萬 / 風險控管）")
+    size = position_sizing(
+        account_ntd=account_ntd,
+        entry=risk["entry_ref"],
+        stop=risk["stop"],
+        max_position_pct=max_position_pct,
+        risk_pct=risk_pct,
+    )
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("每筆可承擔風險（NTD）", f"{size['risk_amt']:,.0f}")
+    d2.metric("每股風險（Entry-Stop）", f"{size['per_share_risk']:,.2f}")
+    d3.metric("建議股數（shares）", f"{size['shares']:,.0f}")
+    d4.metric("部位金額 / 佔資金", f"{size['pos_value']:,.0f} / {size['pos_pct']*100:.1f}%")
+    st.markdown("## 📈 指標狀態（快速判讀）")
+    ind = pd.DataFrame([{
+        "Close": float(last["Close"]),
+        "EMA20": float(last["EMA20"]) if pd.notna(last["EMA20"]) else np.nan,
+        "SMA60": float(last["SMA60"]) if pd.notna(last["SMA60"]) else np.nan,
+        "RSI14": float(last["RSI14"]) if pd.notna(last["RSI14"]) else np.nan,
+        "K": float(last["K"]) if pd.notna(last["K"]) else np.nan,
+        "D": float(last["D"]) if pd.notna(last["D"]) else np.nan,
+        "MACD": float(last["MACD"]) if pd.notna(last["MACD"]) else np.nan,
+        "MACD_SIG": float(last["MACD_SIG"]) if pd.notna(last["MACD_SIG"]) else np.nan,
+        "ATR14": float(last["ATR14"]) if pd.notna(last["ATR14"]) else np.nan,
+        "BB_L": float(last["BB_L"]) if pd.notna(last["BB_L"]) else np.nan,
+        "BB_M": float(last["BB_M"]) if pd.notna(last["BB_M"]) else np.nan,
+        "BB_U": float(last["BB_U"]) if pd.notna(last["BB_U"]) else np.nan,
+        "VOL>VMA20": bool(flags.get("vol_up", False)),
+        "Break BB Upper": bool(flags.get("break_bb_upper", False)),
+    }])
+    st.dataframe(ind, use_container_width=True, hide_index=True)
+    st.markdown("## 🧷 布林通道圖（Matplotlib）")
+    plot_bollinger(df, code)
 
 # -----------------------------
-# Top10
+# Top10 Scanner
 # -----------------------------
-DEFAULT_POOL = [
-    "2330", "2317", "2454", "2303", "2412", "3037", "2382", "2881", "2882", "1301",
-    "1303", "2308", "2379", "3711", "3008", "4967", "3034", "8046", "6274", "2618"
-]
-
-def render_top10():
-    st.subheader("🔥 AI 強勢股 Top 10（含可操作判斷）")
-    st.caption("先用小池測試（避免全市場在 Cloud 超時）。Top10 會自動去重、並顯示當下操作判斷與關鍵區間。")
-
-    pool_text = st.text_area("Stock Pool（每行一檔，留空用預設池）", value="\n".join(DEFAULT_POOL), height=170)
-    pool = [normalize_ticker_input(x) for x in pool_text.splitlines() if normalize_ticker_input(x)]
+def scan_top10(stock_pool: List[str]):
+    seen = set()
+    pool = []
+    for s in stock_pool:
+        s = str(s).strip().upper().replace(" ", "")
+        if s and s not in seen:
+            pool.append(s)
+            seen.add(s)
     if not pool:
-        pool = DEFAULT_POOL[:]
-
-    # de-duplicate early
-    pool = list(dict.fromkeys(pool))
-
-    rows = []
-    diag_fail_count = 0
-    for t in pool:
-        df, src, diags = fetch_with_fallback(t, period, uploaded)
-        if df.empty:
-            diag_fail_count += 1
-            continue
-        df = add_indicators(df)
-        latest = df.iloc[-1]
-        score = resonance_score(latest)
-        zones = compute_trade_zones(df)
-        close = zones["close"]
-        nb1, nb2 = zones["near_buy"]
-        ns1, ns2 = zones["near_sell"]
-
-        # Determine action under chosen strategy
-        if strategy_choice.startswith("回檔"):
-            out = strategy_pullback(df, max_buy_distance=max_buy_distance or 0.12)
-        else:
-            out = strategy_breakout(
-                df,
-                chase_max=chase_max or 0.06,
-                breakout_atr_buffer=breakout_atr_buffer or 0.20,
-                stop_atr=stop_atr or 1.60,
-                rr=rr or 2.2
-            )
-
-        rows.append({
-            "股票": t,
-            "來源": src,
-            "現價": round(close, 2),
-            "AI分數": score,
-            "當下判斷": out["action"],
-            "近端買區": f"{nb1:.2f}~{nb2:.2f}",
-            "買區距離": professional_distance_label(close, nb1, nb2),
-            "近端賣區": f"{ns1:.2f}~{ns2:.2f}",
-            "賣區距離": professional_distance_label(close, ns1, ns2),
-        })
-
-    if not rows:
-        st.error("Top10 掃描結果為空（代表資料源暫時抓不到）。建議先按「網路測試」或用 CSV 上傳備援。")
+        st.warning("股票池為空。")
         return
-
-    df_rank = pd.DataFrame(rows)
-
-    # avoid duplicate single stock repeats (extra safeguard)
-    df_rank = df_rank.drop_duplicates(subset=["股票"], keep="first")
-
-    df_rank = df_rank.sort_values(by="AI分數", ascending=False).head(10)
-    st.dataframe(df_rank, use_container_width=True)
-
-    if diag_fail_count > 0:
-        st.info(f"掃描時有 {diag_fail_count} 檔抓不到資料（Cloud 偶發/WAF/缺套件），其餘已成功計分。")
-
-    st.caption("提示：點回「單一股票分析」輸入 Top10 任一檔，可看完整布林通道圖與交易計畫。")
-
+    hard_limit = 35
+    pool = pool[:hard_limit]
+    rows = []
+    diag_map: Dict[str, List[FetchAttempt]] = {}
+    prog = st.progress(0)
+    for i, code in enumerate(pool, start=1):
+        df, src, attempts = fetch_ohlcv_multi(code, months_back=months_back, csv_upload=None)  # Top10 不用 upload
+        diag_map[code] = attempts
+        if df is None or df.empty:
+            prog.progress(i / len(pool))
+            continue
+        df = compute_signals(df)
+        last = df.iloc[-1]
+        score, flags = confluence_score(last)
+        plan = build_breakout_plan(
+            df=df,
+            max_chase_pct=max_chase_pct,
+            trigger_buffer_atr=trigger_buffer_atr,
+            stop_atr_mult=stop_atr_mult,
+            target_rr=target_rr,
+        )
+        action, _ = breakout_action(df, flags, plan, max_chase_pct=max_chase_pct)
+        close = float(last["Close"])
+        trigger = float(plan["trigger"]["price"])
+        chase_pct = (close - trigger) / trigger * 100 if trigger > 0 else np.nan
+        rows.append({
+            "股票": code,
+            "來源": src,
+            "AI分數": score,
+            "當下判斷": action,
+            "現價": close,
+            "突破觸發價": trigger,
+            "追價距離(%)": chase_pct,
+        })
+        prog.progress(i / len(pool))
+    if not rows:
+        st.warning("掃描結果為空（資料源可能暫時抓不到）。")
+        return
+    out = pd.DataFrame(rows).drop_duplicates(subset=["股票"], keep="first")
+    rank = {"BUY": 0, "WATCH": 1, "SELL": 2}
+    out["rank"] = out["當下判斷"].map(rank).fillna(9).astype(int)
+    out["abs_chase"] = out["追價距離(%)"].abs()
+    out = out.sort_values(["rank", "AI分數", "abs_chase"], ascending=[True, False, True]).head(10)
+    out = out.drop(columns=["rank", "abs_chase"])
+    st.markdown("## 🔥 AI 強勢股 Top 10（突破追價排序）")
+    st.dataframe(out, use_container_width=True, hide_index=True)
+    if debug:
+        st.markdown("### 🧩 Top10 逐檔診斷（Debug）")
+        pick = st.selectbox("選擇要看診斷的股票", out["股票"].tolist())
+        render_diagnostics(diag_map.get(pick, []))
 
 # -----------------------------
-# Render
+# UI Routing
 # -----------------------------
 if mode == "單一股票分析":
-    render_single_stock()
+    colL, colR = st.columns([1.2, 3.6])
+    with colL:
+        code = st.text_input("請輸入股票代號", value="6274")
+        if st.button("網路測試（建議先按一次）"):
+            for name, url in [
+                ("TWSE", "https://www.twse.com.tw/"),
+                ("TPEX", "https://www.tpex.org.tw/"),
+                ("TWSE API", "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?response=json&date=20260101&stockNo=2330"),
+                ("TPEX API", "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&o=json&d=114/02&stkno=6274"),
+            ]:
+                r, err, preview = _requests_get(url, timeout=10)
+                if r is None:
+                    st.error(f"{name} ping 失敗：{err}")
+                else:
+                    st.success(f"{name}：HTTP {r.status_code} / bytes {len(r.text or '')}")
+                    st.caption(f"preview：{preview}")
+    with colR:
+        analyze_one(code)
 else:
-    render_top10()
+    st.markdown("## Top 10 掃描器（突破追價進場）")
+    st.caption("雲端避免一次掃全市場；建議先用 20–35 檔測試。")
+    default_pool = "2330,2317,2454,3037,8046,2382,2303,4967,2603,2609,2882,2881,2891,0050,006208,6274"
+    pool_text = st.text_area("輸入股票池（逗號分隔）", value=default_pool, height=110)
+    stock_pool = [x.strip() for x in pool_text.split(",") if x.strip()]
+    scan_top10(stock_pool)
+    st.caption("⚠️ 本工具僅供資訊顯示與風險控管演算，不構成投資建議，也不會自動下單。")
