@@ -124,59 +124,67 @@ def _make_yf_candidates(code: str) -> list[str]:
 # Data loaders (FinMind -> YF)
 # -----------------------------
 @st.cache_data(ttl=cache_ttl)
-def load_from_finmind(code_digits: str, start: str, end: str) -> pd.DataFrame:
+import time
+from pandas_datareader import data as pdr
+
+def load_from_stooq(code_digits: str, start: str, end: str) -> pd.DataFrame:
+    """
+    Stooq 台股格式：2330.tw
+    回傳欄位通常是: Date, Open, High, Low, Close, Volume
+    """
     try:
-        from FinMind.data import DataLoader
-    except Exception:
-        return pd.DataFrame()
-    try:
-        dl = DataLoader()
-        raw = dl.taiwan_stock_daily(stock_id=code_digits, start_date=start, end_date=end)
-        if raw is None or raw.empty:
+        sym = f"{code_digits}.tw"
+        df = pdr.DataReader(sym, "stooq", start=start, end=end)  # index=Date
+        if df is None or df.empty:
             return pd.DataFrame()
-        df = pd.DataFrame({
-            "Date": pd.to_datetime(raw["date"], errors="coerce"),
-            "Open": raw["open"],
-            "High": raw.get("max", np.nan),
-            "Low": raw.get("min", np.nan),
-            "Close": raw["close"],
-            "Volume": raw.get("Trading_Volume", raw.get("volume", 0)),
-        })
+        df = df.reset_index()
+        df = df.rename(columns={"Date":"Date","Open":"Open","High":"High","Low":"Low","Close":"Close","Volume":"Volume"})
         return _ensure_ohlcv(df)
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=cache_ttl)
-def load_from_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame:
-    try:
-        df = yf.download(
-            ticker, start=start, end=end,
-            progress=False, auto_adjust=False,
-            group_by="column", threads=False
-        )
-    except Exception:
-        return pd.DataFrame()
-    if df is None or df.empty:
-        return pd.DataFrame()
-    df = _flatten_yf_columns(df)
-    return _ensure_ohlcv(df)
+def load_from_yfinance_retry(ticker: str, start: str, end: str, retries: int = 2, sleep_s: float = 0.6) -> pd.DataFrame:
+    last = pd.DataFrame()
+    for _ in range(retries + 1):
+        last = load_from_yfinance(ticker, start, end)
+        if not last.empty:
+            return last
+        time.sleep(sleep_s)
+    return last
 
-def load_data_best_effort(code: str, start: str, end: str) -> tuple[pd.DataFrame, str]:
+def load_data_best_effort(code: str, start: str, end: str) -> tuple[pd.DataFrame, str, list[dict]]:
+    """
+    回傳 (df, source_used, diag_list)
+    diag_list 讓你在 UI 看得到：每一路是 EMPTY 還是 OK
+    """
     code = (code or "").strip().upper()
-    if not code:
-        return pd.DataFrame(), ""
+    diag = []
 
+    if not code:
+        return pd.DataFrame(), "", diag
+
+    # 1) FinMind（僅純數字）
     if code.isdigit():
         df_fm = load_from_finmind(code, start, end)
+        diag.append({"source":"FinMind", "ticker":code, "result":"OK" if not df_fm.empty else "EMPTY"})
         if not df_fm.empty:
-            return df_fm, "FinMind"
+            return df_fm, "FinMind", diag
 
+    # 2) yfinance（.TW/.TWO/原始）
     for t in _make_yf_candidates(code):
-        df_yf = load_from_yfinance(t, start, end)
+        df_yf = load_from_yfinance_retry(t, start, end, retries=2, sleep_s=0.6)
+        diag.append({"source":"YF", "ticker":t, "result":"OK" if not df_yf.empty else "EMPTY"})
         if not df_yf.empty:
-            return df_yf, f"YF({t})"
+            return df_yf, f"YF({t})", diag
 
-    return pd.DataFrame(), ""
+    # 3) Stooq（第三備援：僅純數字）
+    if code.isdigit():
+        df_sq = load_from_stooq(code, start, end)
+        diag.append({"source":"STOOQ", "ticker":f"{code}.tw", "result":"OK" if not df_sq.empty else "EMPTY"})
+        if not df_sq.empty:
+            return df_sq, "STOOQ", diag
+
+    return pd.DataFrame(), "", diag
 
 # -----------------------------
 # Indicators + Bollinger
