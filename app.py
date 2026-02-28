@@ -1,9 +1,9 @@
 # app.py
-# AI Stock Trading Assistant（TW）- V9.1 FIX
-# ✅ 單股代號統一（不再出現 2330/3017 混在一起）
-# ✅ 單股頁面：布林通道分析 + 當下買/賣/等 + 預估未來買賣點（清楚可判斷）
-# ✅ 雷達：主榜/觀察 + 逐檔診斷收起
-# ✅ FinMind 優先 + yfinance fallback（含 MultiIndex 修正）
+# AI Stock Trading Assistant（TW）- V9.2 CLEAN NAV
+# ✅ 用「頁面切換」取代 Tabs：不再同頁出現兩支股票代號造成混淆
+# ✅ 單股頁：一定顯示 BUY/SELL/WAIT + 布林通道判斷 + 預估未來買賣點 + 圖
+# ✅ 雷達頁：只做掃描與「帶入單股」(更新同一個 analysis_code)
+# ✅ FinMind 優先 + yfinance fallback（MultiIndex 修正）
 # ⚠️ 僅供資訊顯示與風控演算，不構成投資建議、不自動下單
 
 from __future__ import annotations
@@ -21,9 +21,9 @@ from ta.volatility import AverageTrueRange
 # -----------------------------
 # Page
 # -----------------------------
-st.set_page_config(page_title="AI Stock Trading Assistant (TW) - V9.1", layout="wide")
-st.title("⚡ AI Stock Trading Assistant（V9.1：雷達 + 單股決策 / 盤後型）")
-st.caption("BUILD: V9.1-SINGLE-CONSISTENT-BB-POINTS-20260228")
+st.set_page_config(page_title="AI Stock Trading Assistant (TW) - V9.2", layout="wide")
+st.title("⚡ AI Stock Trading Assistant（V9.2：雷達 / 單股決策 兩頁式）")
+st.caption("BUILD: V9.2-NAV-NO-DOUBLE-CODE-BB-POINTS-20260228")
 
 DEFAULT_WATCHLIST = [
     "2330","2317","2303","2454","3661","3037","2382","2376",
@@ -32,24 +32,25 @@ DEFAULT_WATCHLIST = [
 ]
 
 # -----------------------------
-# Session state：唯一的「單股分析代號」
+# Session state：唯一代號
 # -----------------------------
 if "analysis_code" not in st.session_state:
     st.session_state["analysis_code"] = "2330"
 
 # -----------------------------
-# Sidebar
+# Sidebar：切頁 + 單股設定（永遠同一個代號）
 # -----------------------------
-st.sidebar.header("🎯 單一股票決策（盤後）")
+st.sidebar.header("🧭 導航")
+page = st.sidebar.radio("選擇頁面", ["🎯 單股決策（盤後）", "⚡ 市場雷達（掃描）"], index=0)
 
-# 用 key 綁定 session_state，確保全站只有一個代號
+st.sidebar.divider()
+st.sidebar.header("🎯 單一股票設定（全站唯一）")
 st.sidebar.text_input("股票代號", key="analysis_code")
 single_lookback = st.sidebar.selectbox("回溯天數", [180, 365, 730], index=1)
 signal_mode = st.sidebar.checkbox("訊號機模式（更乾淨）", value=True)
-run_single = st.sidebar.button("分析單股", type="primary")
 
 st.sidebar.divider()
-st.sidebar.header("⚡ 市場雷達設定")
+st.sidebar.header("⚡ 雷達設定")
 watchlist_text = st.sidebar.text_area(
     "掃描股票池（逗號或換行分隔）",
     value="\n".join(DEFAULT_WATCHLIST),
@@ -102,10 +103,10 @@ def _ensure_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df = df.dropna(subset=["Date"])
 
-    for c in ["Open", "High", "Low", "Close", "Volume"]:
+    for c in ["Open","High","Low","Close","Volume"]:
         df[c] = _safe_float_series(df[c])
 
-    df = df.dropna(subset=["Open", "High", "Low", "Close"])
+    df = df.dropna(subset=["Open","High","Low","Close"])
     df["Volume"] = df["Volume"].fillna(0.0)
     return df.sort_values("Date").reset_index(drop=True)
 
@@ -178,7 +179,7 @@ def load_data_best_effort(code: str, start: str, end: str) -> tuple[pd.DataFrame
     return pd.DataFrame(), ""
 
 # -----------------------------
-# Indicators (EMA/RSI/MACD/ATR + Bollinger)
+# Indicators + Bollinger
 # -----------------------------
 def add_indicators(df_ohlcv: pd.DataFrame) -> pd.DataFrame:
     if df_ohlcv is None or df_ohlcv.empty:
@@ -214,7 +215,7 @@ def add_indicators(df_ohlcv: pd.DataFrame) -> pd.DataFrame:
     return df.dropna().reset_index(drop=True)
 
 # -----------------------------
-# Radar score (突破短波段)
+# Radar scoring (breakout)
 # -----------------------------
 def breakout_score(df_ohlcv: pd.DataFrame) -> tuple[int, dict | None]:
     df = add_indicators(df_ohlcv)
@@ -257,7 +258,7 @@ def breakout_score(df_ohlcv: pd.DataFrame) -> tuple[int, dict | None]:
     }
 
 # -----------------------------
-# Single-stock decision (清楚判斷 + 點位)
+# Single decision（BUY/SELL/WAIT + BB 判斷 + 預估點位）
 # -----------------------------
 def single_decision(df_i: pd.DataFrame) -> dict:
     latest = df_i.iloc[-1]
@@ -275,7 +276,7 @@ def single_decision(df_i: pd.DataFrame) -> dict:
     bb_low = float(latest["BB_LOW"])
     vol = float(latest["Volume"])
 
-    # 布林位置
+    # Bollinger position
     if price >= bb_up:
         boll_pos = "上軌附近（偏過熱/動能強）"
     elif price <= bb_low:
@@ -285,7 +286,7 @@ def single_decision(df_i: pd.DataFrame) -> dict:
     else:
         boll_pos = "中軌之下（偏弱）"
 
-    # 布林壓縮/擴張（分位數）
+    # Bollinger squeeze/expansion
     widths = ((df_i["BB_UP"] - df_i["BB_LOW"]) / df_i["BB_MID"]).replace([np.inf, -np.inf], np.nan).dropna()
     width = (bb_up - bb_low) / bb_mid if bb_mid else np.nan
     boll_state = "不足以判斷"
@@ -299,23 +300,20 @@ def single_decision(df_i: pd.DataFrame) -> dict:
         else:
             boll_state = "正常"
 
-    # 規則（盤後）
+    # Rules
     trend_ok = (price > ema20 and ema20 > ema60)
     breakout_ok = (price > float(prev5_high))
     vol_ok = (vol_mean > 0 and vol > 1.3 * vol_mean)
     macd_ok = (macd_h > 0)
     rsi_ok = (rsi > 55)
 
-    # 預估點位（你要的）
-    buy_pull_low = round(ema20 * 0.99, 2)
-    buy_pull_high = round(ema20 * 1.01, 2)
+    # Forecast points
+    buy_pull = (round(ema20 * 0.99, 2), round(ema20 * 1.01, 2))
     buy_break = round(float(prev5_high) + 0.2 * atr, 2)
-
     stop = round(price - 1.2 * atr, 2)
     target_rr = round(price + (price - stop) * 2.2, 2)
     target_bb = round(bb_up, 2)
 
-    # 一眼結論
     if trend_ok and breakout_ok and rsi_ok and (vol_ok or macd_ok):
         decision = "BUY"
         decision_text = "🟢 BUY（盤後確認突破）"
@@ -338,18 +336,15 @@ def single_decision(df_i: pd.DataFrame) -> dict:
         "decision": decision,
         "decision_text": decision_text,
         "price": round(price, 2),
-        "buy_pull": (buy_pull_low, buy_pull_high),
+
+        "buy_pull": buy_pull,
         "buy_break": buy_break,
         "stop": stop,
         "target_rr": target_rr,
         "target_bb": target_bb,
+
         "boll_pos": boll_pos,
         "boll_state": boll_state,
-        "ema20": round(ema20, 2),
-        "ema60": round(ema60, 2),
-        "rsi": round(rsi, 1),
-        "macd_h": round(macd_h, 4),
-        "atr": round(atr, 2),
         "reasons": reasons,
     }
 
@@ -376,14 +371,66 @@ def plot_single_chart(df_i: pd.DataFrame, info: dict, title: str):
     st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------
-# UI Tabs
+# Render pages
 # -----------------------------
-tab_radar, tab_single = st.tabs(["⚡ 市場雷達（掃描）", "🎯 單股決策（買/賣/等 + 布林 + 點位）"])
+code = (st.session_state["analysis_code"] or "").strip().upper()
 
-# -----------------------------
-# Radar tab
-# -----------------------------
-with tab_radar:
+if page.startswith("🎯"):
+    st.subheader("🎯 單股決策（盤後）— BUY/SELL/WAIT + 布林通道判斷 + 預估買賣點")
+    st.write(f"**目前分析代號（全站唯一）**：`{code}`")
+
+    today = dt.date.today()
+    start = (today - dt.timedelta(days=int(single_lookback))).strftime("%Y-%m-%d")
+    end = (today + dt.timedelta(days=1)).strftime("%Y-%m-%d")
+
+    df_raw, src = load_data_best_effort(code, start, end)
+    if df_raw.empty:
+        st.error("❌ 無法取得資料（FinMind / yfinance 均失敗）。請換代號或稍後再試。")
+        st.stop()
+
+    df_i = add_indicators(df_raw)
+    if df_i.empty:
+        st.error("❌ 指標計算失敗或資料不足。請把回溯天數改 365/730 再試。")
+        st.stop()
+
+    info = single_decision(df_i)
+
+    if info["decision"] == "BUY":
+        st.success(info["decision_text"])
+    elif info["decision"] == "SELL":
+        st.error(info["decision_text"])
+    else:
+        st.warning(info["decision_text"])
+
+    if signal_mode:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("預估買點（回踩買區）", f'{info["buy_pull"][0]} ~ {info["buy_pull"][1]}')
+            st.metric("預估買點（突破觸發）", f'{info["buy_break"]}')
+        with c2:
+            st.metric("停損（ATR×1.2）", f'{info["stop"]}')
+            st.metric("收盤（Entry）", f'{info["price"]}')
+        with c3:
+            st.metric("預估賣點（RR 2.2）", f'{info["target_rr"]}')
+            st.metric("預估賣點（布林上軌）", f'{info["target_bb"]}')
+
+        st.markdown("### 📉 布林通道判斷")
+        st.write(f"• 位置：**{info['boll_pos']}**")
+        st.write(f"• 狀態：**{info['boll_state']}**")
+        st.caption(f"資料來源：{src}")
+
+        plot_single_chart(df_i, info, title=f"{code} | 來源：{src}")
+
+        with st.expander("🧠 判斷依據（展開）", expanded=False):
+            for r in info["reasons"]:
+                st.write("• ", r)
+    else:
+        st.write(info)
+        plot_single_chart(df_i, info, title=f"{code} | 來源：{src}")
+
+else:
+    st.subheader("⚡ 市場雷達（掃描）— 主榜/觀察 + 帶入單股（更新同一個代號）")
+
     today = dt.date.today()
     start = (today - dt.timedelta(days=int(radar_lookback))).strftime("%Y-%m-%d")
     end = (today + dt.timedelta(days=1)).strftime("%Y-%m-%d")
@@ -396,26 +443,26 @@ with tab_radar:
     results = []
     diag_rows = []
 
-    for i, code in enumerate(WATCHLIST):
-        status.write(f"掃描中：{code} ({i+1}/{len(WATCHLIST)})")
-        df, src = load_data_best_effort(code, start, end)
+    for i, s in enumerate(WATCHLIST):
+        status.write(f"掃描中：{s} ({i+1}/{len(WATCHLIST)})")
+        df, src = load_data_best_effort(s, start, end)
 
         if df.empty:
-            diag_rows.append({"股票": code, "來源": src or "-", "狀態": "EMPTY", "備註": "無資料"})
+            diag_rows.append({"股票": s, "來源": src or "-", "狀態": "EMPTY", "備註": "無資料"})
             progress.progress(int((i + 1) / len(WATCHLIST) * 100))
             continue
 
         score, trade = breakout_score(df)
         if trade is None:
-            diag_rows.append({"股票": code, "來源": src, "狀態": "SKIP", "備註": f"指標/資料不足（score={score}）"})
+            diag_rows.append({"股票": s, "來源": src, "狀態": "SKIP", "備註": f"指標/資料不足（score={score}）"})
             progress.progress(int((i + 1) / len(WATCHLIST) * 100))
             continue
 
-        diag_rows.append({"股票": code, "來源": src, "狀態": "OK", "備註": f"score={score}"})
+        diag_rows.append({"股票": s, "來源": src, "狀態": "OK", "備註": f"score={score}"})
 
         if score >= int(score_watch):
             results.append({
-                "股票": code,
+                "股票": s,
                 "分數": int(score),
                 "來源": src,
                 "進場": trade["entry"],
@@ -435,15 +482,16 @@ with tab_radar:
     )
 
     left, right = st.columns([1.4, 1])
+
     with left:
-        st.subheader(f"⚡ 今日突破榜（{score_strong}+）")
+        st.markdown(f"### ⚡ 今日突破榜（{score_strong}+）")
         strong = df_results[df_results["分數"] >= int(score_strong)].copy()
         if strong.empty:
             st.info("今日沒有達到主榜門檻的突破型機會。")
         else:
             st.dataframe(strong, use_container_width=True)
 
-        st.subheader(f"🟡 次強觀察區（{score_watch}~{int(score_strong)-1}）")
+        st.markdown(f"### 🟡 次強觀察區（{score_watch}~{int(score_strong)-1}）")
         watch = df_results[(df_results["分數"] >= int(score_watch)) & (df_results["分數"] < int(score_strong))].copy()
         if watch.empty:
             st.caption("無次強觀察標的。")
@@ -451,94 +499,16 @@ with tab_radar:
             st.dataframe(watch, use_container_width=True)
 
     with right:
-        st.subheader("📌 從雷達選一檔帶入『單股決策』")
+        st.markdown("### 📌 從雷達帶入單股（只更新同一個代號）")
         if not df_results.empty:
             pick = st.selectbox("選一檔", options=df_results["股票"].tolist(), index=0)
-            if st.button("➡️ 帶入單股決策（只會更新同一個代號）"):
+            if st.button("➡️ 設定為單股分析代號"):
                 st.session_state["analysis_code"] = str(pick)
-                st.success(f"已帶入：{pick}（切到『單股決策』分頁即可看到）")
+                st.success(f"已設定 analysis_code = {pick}；請到左側切換到「單股決策」頁面查看。")
         else:
             st.caption("目前雷達沒有可用標的可選。")
 
         with st.expander("🧩 逐檔診斷（收起不干擾）", expanded=False):
             st.dataframe(pd.DataFrame(diag_rows), use_container_width=True)
-
-# -----------------------------
-# Single tab
-# -----------------------------
-with tab_single:
-    st.subheader("🎯 單股決策（盤後）— 清楚判斷 + 布林通道 + 預估未來買賣點")
-
-    code_to_use = (st.session_state["analysis_code"] or "").strip().upper()
-    st.write(f"**目前分析代號**：`{code_to_use}`（全站唯一，不會出現兩支股票混在一起）")
-
-    today = dt.date.today()
-    start = (today - dt.timedelta(days=int(single_lookback))).strftime("%Y-%m-%d")
-    end = (today + dt.timedelta(days=1)).strftime("%Y-%m-%d")
-
-    df_raw, src = load_data_best_effort(code_to_use, start, end)
-    if df_raw.empty:
-        st.error("❌ 無法取得資料（FinMind / yfinance 均失敗）。請換代號或稍後再試。")
-        st.stop()
-
-    df_i = add_indicators(df_raw)
-    if df_i.empty:
-        st.error("❌ 指標計算失敗或資料不足。請把回溯天數改 365/730 再試。")
-        st.stop()
-
-    info = single_decision(df_i)
-
-    # 大字結論
-    if info["decision"] == "BUY":
-        st.success(info["decision_text"])
-    elif info["decision"] == "SELL":
-        st.error(info["decision_text"])
-    else:
-        st.warning(info["decision_text"])
-
-    # 核心：買賣點 & 布林
-    if signal_mode:
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("預估買點（回踩買區）", f'{info["buy_pull"][0]} ~ {info["buy_pull"][1]}')
-            st.metric("預估買點（突破觸發）", f'{info["buy_break"]}')
-        with c2:
-            st.metric("停損（ATR×1.2）", f'{info["stop"]}')
-            st.metric("收盤（Entry）", f'{info["price"]}')
-        with c3:
-            st.metric("預估賣點（RR 2.2）", f'{info["target_rr"]}')
-            st.metric("預估賣點（布林上軌）", f'{info["target_bb"]}')
-
-        st.markdown("### 📉 布林通道分析")
-        st.write(f"• 位置：**{info['boll_pos']}**")
-        st.write(f"• 狀態：**{info['boll_state']}**")
-        st.caption(f"資料來源：{src}")
-
-        plot_single_chart(df_i, info, title=f"{code_to_use} | 來源：{src}")
-
-        with st.expander("🧠 判斷依據（展開）", expanded=False):
-            for r in info["reasons"]:
-                st.write("• ", r)
-
-    else:
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Close(Entry)", f'{info["price"]}')
-        m2.metric("EMA20 / EMA60", f'{info["ema20"]} / {info["ema60"]}')
-        m3.metric("RSI", f'{info["rsi"]}')
-        m4.metric("MACD_H", f'{info["macd_h"]}')
-        m5.metric("ATR", f'{info["atr"]}')
-
-        st.markdown("### 🔮 預估未來買賣點")
-        st.write(f"**回踩買區（EMA20±1%）**：`{info['buy_pull'][0]} ~ {info['buy_pull'][1]}`")
-        st.write(f"**突破觸發（前5高+0.2ATR）**：`{info['buy_break']}`")
-        st.write(f"**停損（ATR×1.2）**：`{info['stop']}`")
-        st.write(f"**賣點（RR 2.2）**：`{info['target_rr']}`")
-        st.write(f"**賣點（布林上軌）**：`{info['target_bb']}`")
-
-        st.markdown("### 📉 布林通道分析")
-        st.write(f"• 位置：**{info['boll_pos']}**")
-        st.write(f"• 狀態：**{info['boll_state']}**")
-
-        plot_single_chart(df_i, info, title=f"{code_to_use} | 來源：{src}")
 
 st.caption(f"runtime: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
