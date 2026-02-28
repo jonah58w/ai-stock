@@ -67,6 +67,8 @@ def breakout_score(df):
     if df is None or df.empty:
         return 0, None
 
+    if len(df) < 60:
+        return 0, None
     df = df.copy()
 
     # 強制整理欄位
