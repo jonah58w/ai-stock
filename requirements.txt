@@ -5,3 +5,4 @@ plotly
 yfinance
 ta
 FinMind
+pandas-datareader==0.10.0
