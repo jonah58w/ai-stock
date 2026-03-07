@@ -4,6 +4,7 @@ import io
 import math
 import traceback
 from datetime import datetime, date, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -40,6 +41,7 @@ FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 DEFAULT_START_DAYS = 720
 DEFAULT_TOP_N = 10
 REQUEST_TIMEOUT = 25
+MAX_SCAN_WORKERS = 12
 TW_TZ = ZoneInfo("Asia/Taipei")
 
 # =============================
@@ -520,10 +522,10 @@ def ml_predict_probability(df: pd.DataFrame) -> Tuple[float, str, Optional[float
 # =============================
 # 回測系統
 # =============================
-def backtest_score_strategy(df: pd.DataFrame, dy=np.nan, pe=np.nan, pb=np.nan, roe=np.nan, buy_threshold=70, sell_threshold=50) -> Dict[str, float]:
+def backtest_score_strategy(df: pd.DataFrame, dy=np.nan, pe=np.nan, pb=np.nan, roe=np.nan, buy_threshold=70, sell_threshold=50) -> Dict[str, object]:
     bt = df.copy().dropna().copy()
     if len(bt) < 150:
-        return {"trades": 0, "win_rate": np.nan, "cum_return": np.nan, "max_drawdown": np.nan}
+        return {"trades": 0, "win_rate": np.nan, "cum_return": np.nan, "max_drawdown": np.nan, "equity_curve": pd.DataFrame()}
 
     equity = 1.0
     peak = 1.0
@@ -532,13 +534,14 @@ def backtest_score_strategy(df: pd.DataFrame, dy=np.nan, pe=np.nan, pb=np.nan, r
     entry = 0.0
     wins = 0
     trades = 0
-    daily_equity = []
+    curve_rows = []
 
     for i in range(210, len(bt) - 1):
         sub = bt.iloc[: i + 1]
         score = ai_score(sub, dy, pe, pb, roe)
         px = float(bt["Close"].iloc[i])
         next_px = float(bt["Close"].iloc[i + 1])
+        dt_idx = bt.index[i + 1]
 
         if (not in_pos) and score >= buy_threshold:
             in_pos = True
@@ -551,13 +554,10 @@ def backtest_score_strategy(df: pd.DataFrame, dy=np.nan, pe=np.nan, pb=np.nan, r
                 wins += 1
             in_pos = False
 
-        if in_pos:
-            mark = equity * (next_px / entry)
-        else:
-            mark = equity
+        mark = equity * (next_px / entry) if in_pos else equity
         peak = max(peak, mark)
         max_dd = min(max_dd, mark / peak - 1)
-        daily_equity.append(mark)
+        curve_rows.append({"date": dt_idx, "equity": mark})
 
     if in_pos:
         ret = float(bt["Close"].iloc[-1]) / entry - 1
@@ -565,11 +565,13 @@ def backtest_score_strategy(df: pd.DataFrame, dy=np.nan, pe=np.nan, pb=np.nan, r
         if ret > 0:
             wins += 1
 
+    curve_df = pd.DataFrame(curve_rows)
     return {
         "trades": trades,
         "win_rate": wins / trades * 100 if trades > 0 else np.nan,
         "cum_return": (equity - 1) * 100,
         "max_drawdown": max_dd * 100,
+        "equity_curve": curve_df,
     }
 
 # =============================
@@ -654,6 +656,29 @@ def selector_bucket(score: float, prob: float, dy: float) -> str:
         return "平衡候選"
     return "觀察"
 
+
+def selector_reason(df: pd.DataFrame, score: float, prob: float, dy: float, pe: float, flow: float) -> str:
+    last = df.iloc[-1]
+    reasons = []
+    if safe_float(last.get("MACD_hist"), 0) > 0:
+        reasons.append("MACD翻正")
+    if safe_float(last.get("K"), 50) > safe_float(last.get("D"), 50):
+        reasons.append("KD偏多")
+    rsi = safe_float(last.get("RSI"), 50)
+    if rsi < 35:
+        reasons.append("RSI偏低反彈區")
+    if not pd.isna(dy) and dy >= 4:
+        reasons.append("高殖利率")
+    if not pd.isna(pe) and pe <= 15:
+        reasons.append("本益比偏低")
+    if not pd.isna(flow) and flow > 0:
+        reasons.append("資金流入")
+    if prob >= 0.6:
+        reasons.append("ML機率高")
+    if score >= 75:
+        reasons.append("綜合分數強")
+    return " / ".join(reasons[:4]) if reasons else "技術與價值條件中性"
+
 # =============================
 # 買賣點 / 圖表
 # =============================
@@ -688,6 +713,14 @@ def chart(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def equity_curve_chart(curve_df: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    if curve_df is not None and not curve_df.empty:
+        fig.add_trace(go.Scatter(x=pd.to_datetime(curve_df["date"]), y=curve_df["equity"], name="策略淨值"))
+    fig.update_layout(height=320, legend_orientation="h", margin=dict(l=20, r=20, t=20, b=20), title="回測資產曲線")
+    return fig
+
+
 def macd_chart(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD"))
@@ -718,54 +751,69 @@ def rsi_chart(df: pd.DataFrame) -> go.Figure:
 # =============================
 # 掃描器
 # =============================
+def scan_one_stock(stock_id: str, stock_name: str, market_type: Optional[str], token: Optional[str]) -> Optional[dict]:
+    try:
+        df_raw, _ = load_price(stock_id, market_type, token)
+        if df_raw.empty:
+            return None
+        df = add_indicators(df_raw)
+        if df.empty:
+            return None
+        fund = load_fundamental(stock_id, market_type, token)
+        price = float(df.iloc[-1]["Close"])
+        dy = fund["yield"]
+        if pd.isna(dy) and not pd.isna(fund["dividend"]) and price > 0:
+            dy = fund["dividend"] / price * 100
+        pe, pb, eps, roe = fund["pe"], fund["pb"], fund["eps"], fund["roe"]
+        if pd.isna(eps) and not pd.isna(pe) and pe > 0:
+            eps = price / pe
+        if pd.isna(roe) and not pd.isna(pe) and not pd.isna(pb) and pe > 0:
+            roe = pb / pe * 100
+        score = ai_score(df, dy, pe, pb, roe)
+        prob, model_name, acc = ml_predict_probability(df)
+        flow = money_flow_strength(df)
+        bucket = selector_bucket(score, prob, dy if not pd.isna(dy) else 0)
+        reason = selector_reason(df, score, prob, dy, pe, flow)
+        return {
+            "股票": stock_id,
+            "名稱": stock_name,
+            "市場": "上市" if market_type == "twse" else "上櫃",
+            "股價": round(price, 2),
+            "AI分數": score,
+            "預測上漲機率": round(prob * 100, 2),
+            "ML模型": model_name,
+            "ML測試準確率": round(acc * 100, 2) if acc is not None else None,
+            "資金流強度": round(flow, 4) if not pd.isna(flow) else None,
+            "殖利率": round(dy, 2) if not pd.isna(dy) else None,
+            "本益比": round(pe, 2) if not pd.isna(pe) else None,
+            "股價淨值比": round(pb, 2) if not pd.isna(pb) else None,
+            "ROE": round(roe, 2) if not pd.isna(roe) else None,
+            "選股分類": bucket,
+            "推薦理由": reason,
+        }
+    except Exception:
+        return None
+
+
 def scan_universe(universe: pd.DataFrame, token: Optional[str], top_n: int, progress_bar, status_box) -> pd.DataFrame:
     rows = []
+    tasks = []
     total = len(universe)
-    for i, row in universe.iterrows():
-        stock_id = row["stock_id"]
-        stock_name = row.get("stock_name", "")
-        market_type = row.get("type", None)
-        progress_bar.progress((i + 1) / max(total, 1))
-        status_box.caption(f"掃描中：{i+1}/{total} {stock_id} {stock_name}")
-        try:
-            df_raw, _ = load_price(stock_id, market_type, token)
-            if df_raw.empty:
+    with ThreadPoolExecutor(max_workers=MAX_SCAN_WORKERS) as ex:
+        for _, row in universe.iterrows():
+            tasks.append(ex.submit(scan_one_stock, row["stock_id"], row.get("stock_name", ""), row.get("type", None), token))
+
+        done = 0
+        for fut in as_completed(tasks):
+            done += 1
+            progress_bar.progress(done / max(total, 1))
+            try:
+                result = fut.result()
+                if result is not None:
+                    status_box.caption(f"掃描中：{done}/{total} {result['股票']} {result['名稱']}")
+                    rows.append(result)
+            except Exception:
                 continue
-            df = add_indicators(df_raw)
-            if df.empty:
-                continue
-            fund = load_fundamental(stock_id, market_type, token)
-            price = float(df.iloc[-1]["Close"])
-            dy = fund["yield"]
-            if pd.isna(dy) and not pd.isna(fund["dividend"]) and price > 0:
-                dy = fund["dividend"] / price * 100
-            pe, pb, eps, roe = fund["pe"], fund["pb"], fund["eps"], fund["roe"]
-            if pd.isna(eps) and not pd.isna(pe) and pe > 0:
-                eps = price / pe
-            if pd.isna(roe) and not pd.isna(pe) and not pd.isna(pb) and pe > 0:
-                roe = pb / pe * 100
-            score = ai_score(df, dy, pe, pb, roe)
-            prob, model_name, acc = ml_predict_probability(df)
-            flow = money_flow_strength(df)
-            bucket = selector_bucket(score, prob, dy if not pd.isna(dy) else 0)
-            rows.append({
-                "股票": stock_id,
-                "名稱": stock_name,
-                "市場": "上市" if market_type == "twse" else "上櫃",
-                "股價": round(price, 2),
-                "AI分數": score,
-                "預測上漲機率": round(prob * 100, 2),
-                "ML模型": model_name,
-                "ML測試準確率": round(acc * 100, 2) if acc is not None else None,
-                "資金流強度": round(flow, 4) if not pd.isna(flow) else None,
-                "殖利率": round(dy, 2) if not pd.isna(dy) else None,
-                "本益比": round(pe, 2) if not pd.isna(pe) else None,
-                "股價淨值比": round(pb, 2) if not pd.isna(pb) else None,
-                "ROE": round(roe, 2) if not pd.isna(roe) else None,
-                "選股分類": bucket,
-            })
-        except Exception:
-            continue
 
     progress_bar.empty()
     status_box.empty()
@@ -792,6 +840,7 @@ with st.sidebar:
     top_n = st.slider("Top 掃描顯示前 N 名", 5, 30, DEFAULT_TOP_N)
     market_filter = st.selectbox("掃描範圍", ["全部", "上市", "上櫃"], index=0)
     auto_after_close = st.toggle("收盤後自動掃描 Top10", value=True)
+    st.caption(f"目前掃描執行緒：{MAX_SCAN_WORKERS}")
 
     if not SKLEARN_OK:
         st.warning(f"sklearn 未安裝，ML 會退回 heuristic。{SKLEARN_ERR}")
@@ -819,7 +868,15 @@ if auto_after_close and is_after_market_close_tw() and st.session_state.last_aut
 
 if not st.session_state.last_auto_scan_df.empty:
     with st.expander(f"📌 今日收盤後自動掃描 Top {len(st.session_state.last_auto_scan_df)}", expanded=False):
-        st.dataframe(st.session_state.last_auto_scan_df, use_container_width=True, hide_index=True)
+        topdf = st.session_state.last_auto_scan_df.copy()
+        c1, c2, c3 = st.columns(3)
+        if len(topdf) >= 1:
+            c1.metric("#1", f"{topdf.iloc[0]['股票']} {topdf.iloc[0]['名稱']}", f"AI {topdf.iloc[0]['AI分數']}")
+        if len(topdf) >= 2:
+            c2.metric("#2", f"{topdf.iloc[1]['股票']} {topdf.iloc[1]['名稱']}", f"AI {topdf.iloc[1]['AI分數']}")
+        if len(topdf) >= 3:
+            c3.metric("#3", f"{topdf.iloc[2]['股票']} {topdf.iloc[2]['名稱']}", f"AI {topdf.iloc[2]['AI分數']}")
+        st.dataframe(topdf, use_container_width=True, hide_index=True)
 
 # =============================
 # 單一股票分析
@@ -879,12 +936,13 @@ if mode == "📊 單一股票分析":
                     v4.metric("EPS", format_num(eps, 2))
                     v5.metric("ROE", format_pct(roe, 2))
 
-                    st.markdown("## 機器學習與資金流")
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("預測上漲機率", format_pct(prob * 100, 2))
-                    m2.metric("ML模型", model_name)
-                    m3.metric("ML測試準確率", format_pct(acc * 100, 2) if acc is not None else "-")
-                    m4.metric("資金流強度", format_num(flow, 4))
+                    with st.container(border=True):
+                        st.markdown("### 🤖 機器學習與資金流")
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("預測上漲機率", format_pct(prob * 100, 2))
+                        m2.metric("ML模型", model_name)
+                        m3.metric("ML測試準確率", format_pct(acc * 100, 2) if acc is not None else "-")
+                        m4.metric("資金流強度", format_num(flow, 4))
 
                     st.markdown("## 合理價估值")
                     a1, a2 = st.columns(2)
@@ -904,6 +962,7 @@ if mode == "📊 單一股票分析":
                     bt2.metric("勝率", format_pct(bt["win_rate"], 2))
                     bt3.metric("累積報酬", format_pct(bt["cum_return"], 2))
                     bt4.metric("最大回撤", format_pct(bt["max_drawdown"], 2))
+                    st.plotly_chart(equity_curve_chart(bt.get("equity_curve", pd.DataFrame())), use_container_width=True)
 
                     st.markdown("## 趨勢圖與技術分析")
                     st.plotly_chart(chart(df.tail(220)), use_container_width=True)
@@ -938,6 +997,13 @@ elif mode == "🔎 Top10機會掃描":
             if result.empty:
                 st.warning("沒有掃描到可用結果，請稍後再試。")
             else:
+                c1, c2, c3 = st.columns(3)
+                if len(result) >= 1:
+                    c1.metric("#1", f"{result.iloc[0]['股票']} {result.iloc[0]['名稱']}", f"AI {result.iloc[0]['AI分數']}")
+                if len(result) >= 2:
+                    c2.metric("#2", f"{result.iloc[1]['股票']} {result.iloc[1]['名稱']}", f"AI {result.iloc[1]['AI分數']}")
+                if len(result) >= 3:
+                    c3.metric("#3", f"{result.iloc[2]['股票']} {result.iloc[2]['名稱']}", f"AI {result.iloc[2]['AI分數']}")
                 st.dataframe(result, use_container_width=True, hide_index=True)
         except Exception as e:
             st.error(f"掃描失敗：{e}")
@@ -966,11 +1032,11 @@ elif mode == "🤖 AI 自動選股":
                 balance = result[result["選股分類"] == "平衡候選"].head(top_n)
                 t1, t2, t3 = st.tabs(["強勢成長", "價值收益", "平衡候選"])
                 with t1:
-                    st.dataframe(strong, use_container_width=True, hide_index=True)
+                    st.dataframe(strong[[c for c in strong.columns if c in ['股票','名稱','市場','股價','AI分數','預測上漲機率','資金流強度','選股分類','推薦理由']]], use_container_width=True, hide_index=True)
                 with t2:
-                    st.dataframe(value, use_container_width=True, hide_index=True)
+                    st.dataframe(value[[c for c in value.columns if c in ['股票','名稱','市場','股價','AI分數','預測上漲機率','資金流強度','選股分類','推薦理由']]], use_container_width=True, hide_index=True)
                 with t3:
-                    st.dataframe(balance, use_container_width=True, hide_index=True)
+                    st.dataframe(balance[[c for c in balance.columns if c in ['股票','名稱','市場','股價','AI分數','預測上漲機率','資金流強度','選股分類','推薦理由']]], use_container_width=True, hide_index=True)
         except Exception as e:
             st.error(f"選股失敗：{e}")
             st.code(traceback.format_exc())
