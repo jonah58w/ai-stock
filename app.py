@@ -543,13 +543,48 @@ def trade_point(df: pd.DataFrame) -> Tuple[Optional[float], Optional[float], Opt
 
 def chart(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="股價"))
+    fig.add_trace(go.Candlestick(
+        x=df.index,
+        open=df["Open"],
+        high=df["High"],
+        low=df["Low"],
+        close=df["Close"],
+        name="股價",
+    ))
     fig.add_trace(go.Scatter(x=df.index, y=df["SMA20"], name="SMA20"))
     fig.add_trace(go.Scatter(x=df.index, y=df["SMA50"], name="SMA50"))
     fig.add_trace(go.Scatter(x=df.index, y=df["SMA200"], name="SMA200"))
     fig.add_trace(go.Scatter(x=df.index, y=df["BBH"], name="布林上軌"))
     fig.add_trace(go.Scatter(x=df.index, y=df["BBL"], name="布林下軌"))
-    fig.update_layout(height=520, legend_orientation="h", margin=dict(l=20, r=20, t=20, b=20))
+    fig.update_layout(height=520, legend_orientation="h", margin=dict(l=20, r=20, t=20, b=20), xaxis_rangeslider_visible=False)
+    return fig
+
+
+def macd_chart(df: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD"))
+    fig.add_trace(go.Scatter(x=df.index, y=df["MACD_signal"], name="Signal"))
+    fig.add_trace(go.Bar(x=df.index, y=df["MACD_hist"], name="Hist"))
+    fig.update_layout(height=300, legend_orientation="h", margin=dict(l=20, r=20, t=20, b=20), title="MACD 指標")
+    return fig
+
+
+def kd_chart(df: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df["K"], name="K"))
+    fig.add_trace(go.Scatter(x=df.index, y=df["D"], name="D"))
+    fig.add_hline(y=80, line_dash="dash")
+    fig.add_hline(y=20, line_dash="dash")
+    fig.update_layout(height=300, legend_orientation="h", margin=dict(l=20, r=20, t=20, b=20), title="KD 指標")
+    return fig
+
+
+def rsi_chart(df: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI"))
+    fig.add_hline(y=70, line_dash="dash")
+    fig.add_hline(y=30, line_dash="dash")
+    fig.update_layout(height=280, legend_orientation="h", margin=dict(l=20, r=20, t=20, b=20), title="RSI 指標")
     return fig
 
 # ==============================================================
@@ -575,13 +610,13 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Top 10 會掃描 FinMind 全台股清單；若清單抓不到才退回預設備援名單。")
 
-mode = st.radio("系統模式", ["單一股票分析", "Top10機會掃描"], horizontal=True)
+mode = st.radio("系統模式", ["📊 單一股票分析", "🔎 Top10機會掃描"], horizontal=True)
 
 # ==============================================================
 # 單一股票分析
 # ============================================================== 
 
-if mode == "單一股票分析":
+if mode == "📊 單一股票分析":
     symbol = st.text_input("股票代碼", "2330")
 
     if st.button("開始分析"):
@@ -655,7 +690,16 @@ if mode == "單一股票分析":
                     if pd.isna(dy) and pd.isna(pe) and pd.isna(pb) and pd.isna(eps) and pd.isna(roe):
                         st.warning("此股票目前無法抓到可用價值分析欄位，請稍後再試或測試其他股票。")
 
-                    st.plotly_chart(chart(df), use_container_width=True)
+                    st.markdown("## 趨勢圖與技術分析")
+                    st.plotly_chart(chart(df.tail(220)), use_container_width=True)
+
+                    left_col, right_col = st.columns(2)
+                    with left_col:
+                        st.plotly_chart(macd_chart(df.tail(220)), use_container_width=True)
+                    with right_col:
+                        st.plotly_chart(kd_chart(df.tail(220)), use_container_width=True)
+
+                    st.plotly_chart(rsi_chart(df.tail(220)), use_container_width=True)
 
         except Exception as e:
             st.error(f"執行失敗：{e}")
@@ -665,7 +709,7 @@ if mode == "單一股票分析":
 # Top10 掃描（掃描全台股清單）
 # ============================================================== 
 
-else:
+elif mode == "🔎 Top10機會掃描":
     st.markdown("## Top10 機會掃描（全台股）")
 
     market_filter = st.selectbox("掃描範圍", ["全部", "上市", "上櫃"], index=0)
