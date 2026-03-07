@@ -1,15 +1,20 @@
 # =========================================================
-# AI 股票量化分析系統 V10.1（繁體中文版 / 價值分析完整版）
-# 單檔分析 + 全台股 Top 10 掃描 + 價值分析
-# 資料來源：FinMind 優先 + Yahoo Finance 備援
+# AI 股票量化分析系統 V10.1 穩定版（繁體中文版）
+# 直接覆蓋 app.py 使用
+# 功能：
+# - 單一股票分析
+# - 全台股 Top 10 掃描
+# - 技術分析：MACD / KD / RSI / 布林 / ATR
+# - 價值分析：殖利率 / 本益比 / 股價淨值比 / 現金股利 / 合理價
+# - FinMind 優先 + Yahoo Finance 備援
+# - 啟動防呆，不因 PER / Dividend 空表而當掉
 # =========================================================
 
 from __future__ import annotations
 
-import math
 import traceback
 from datetime import date, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -19,14 +24,14 @@ import streamlit as st
 import yfinance as yf
 
 from ta.momentum import RSIIndicator, StochasticOscillator
-from ta.trend import MACD, SMAIndicator, EMAIndicator
-from ta.volatility import BollingerBands, AverageTrueRange
+from ta.trend import MACD, EMAIndicator, SMAIndicator
+from ta.volatility import AverageTrueRange, BollingerBands
 
 # =========================================================
 # 基本設定
 # =========================================================
 st.set_page_config(
-    page_title="AI 股票量化分析系統 V10.1",
+    page_title="AI 股票量化分析系統 V10.1 穩定版",
     page_icon="📈",
     layout="wide",
 )
@@ -35,13 +40,21 @@ FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 DEFAULT_START_DAYS = 420
 
 # =========================================================
-# UI 樣式
+# 樣式
 # =========================================================
 st.markdown(
     """
     <style>
-    .small-muted {color:#6b7280;font-size:0.9rem;}
-    .section-title {font-size:1.15rem;font-weight:700;margin-top:0.4rem;margin-bottom:0.6rem;}
+    .small-muted {
+        color: #6b7280;
+        font-size: 0.9rem;
+    }
+    .section-title {
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-top: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -73,7 +86,7 @@ def normalize_symbol(symbol: str) -> str:
     return s
 
 
-def yahoo_symbol_from_code(code: str, market_type: Optional[str] = None) -> List[str]:
+def yahoo_symbol_from_code(code: str, market_type: Optional[str] = None):
     code = normalize_symbol(code)
     cands = []
     if market_type == "twse":
@@ -114,67 +127,89 @@ def format_pct(v, digits=2) -> str:
 
 
 # =========================================================
-# FinMind API
+# FinMind API 通用抓取
 # =========================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def finmind_get(dataset: str, token: Optional[str] = None, **params) -> pd.DataFrame:
     query = {"dataset": dataset}
     query.update(params)
 
-    resp = requests.get(
-        FINMIND_URL,
-        headers=finmind_headers(token),
-        params=query,
-        timeout=30,
-    )
-    if resp.status_code != 200:
+    try:
+        resp = requests.get(
+            FINMIND_URL,
+            headers=finmind_headers(token),
+            params=query,
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return pd.DataFrame()
+
+        payload = resp.json()
+        data = payload.get("data", [])
+        if not data:
+            return pd.DataFrame()
+
+        return pd.DataFrame(data)
+    except Exception:
         return pd.DataFrame()
 
-    payload = resp.json()
-    data = payload.get("data", [])
-    if not data:
-        return pd.DataFrame()
 
-    return pd.DataFrame(data)
-
-
+# =========================================================
+# 台股清單 / 價值資料（防呆版）
+# =========================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_tw_stock_info(token: Optional[str] = None) -> pd.DataFrame:
     df = finmind_get("TaiwanStockInfo", token=token)
+
+    expected_cols = ["stock_id", "stock_name", "type", "industry_category"]
     if df.empty:
-        return df
+        return pd.DataFrame(columns=expected_cols)
 
     df = df.copy()
-    for col in ["stock_id", "stock_name", "type", "industry_category"]:
+    for col in expected_cols:
         if col not in df.columns:
             df[col] = ""
 
-    # 只保留上市 / 上櫃，且代碼為純數字
     df["stock_id"] = df["stock_id"].astype(str)
     df = df[df["type"].isin(["twse", "tpex"])].copy()
     df = df[df["stock_id"].str.fullmatch(r"\d{4}")].copy()
-
-    # 去重
     df = df.drop_duplicates(subset=["stock_id"], keep="last")
     df = df.sort_values(["type", "stock_id"]).reset_index(drop=True)
-    return df
+
+    return df[expected_cols].copy()
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_latest_per_table(token: Optional[str] = None, start_date: Optional[str] = None) -> pd.DataFrame:
-    """
-    取最近一段時間的 TaiwanStockPER，並保留各股票最新一筆
-    """
+    expected_cols = ["stock_id", "date", "殖利率%", "本益比", "股價淨值比"]
+
     start_date = start_date or (date.today() - timedelta(days=15)).strftime("%Y-%m-%d")
     df = finmind_get("TaiwanStockPER", token=token, start_date=start_date)
+
     if df.empty:
-        return df
+        return pd.DataFrame(columns=expected_cols)
+
+    df = df.copy()
+
+    if "stock_id" not in df.columns:
+        return pd.DataFrame(columns=expected_cols)
+    if "date" not in df.columns:
+        df["date"] = pd.NaT
+    if "dividend_yield" not in df.columns:
+        df["dividend_yield"] = np.nan
+    if "PER" not in df.columns:
+        df["PER"] = np.nan
+    if "PBR" not in df.columns:
+        df["PBR"] = np.nan
 
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["stock_id"] = df["stock_id"].astype(str)
+
     for col in ["dividend_yield", "PER", "PBR"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     df = df.sort_values(["stock_id", "date"]).groupby("stock_id", as_index=False).tail(1)
+
     df = df.rename(
         columns={
             "dividend_yield": "殖利率%",
@@ -182,31 +217,102 @@ def get_latest_per_table(token: Optional[str] = None, start_date: Optional[str] 
             "PBR": "股價淨值比",
         }
     )
-    return df[["stock_id", "date", "殖利率%", "本益比", "股價淨值比"]].copy()
+
+    for col in expected_cols:
+        if col not in df.columns:
+            df[col] = np.nan
+
+    return df[expected_cols].copy()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_latest_dividend_table(token: Optional[str] = None, start_date: Optional[str] = None) -> pd.DataFrame:
-    """
-    取最近 2 年股利政策表，抓每檔股票最新一筆現金股利
-    """
+    expected_cols = ["stock_id", "date", "year", "現金股利"]
+
     start_date = start_date or (date.today() - timedelta(days=730)).strftime("%Y-%m-%d")
     df = finmind_get("TaiwanStockDividend", token=token, start_date=start_date)
+
     if df.empty:
-        return df
+        return pd.DataFrame(columns=expected_cols)
 
-    for col in ["CashEarningsDistribution", "CashStatutorySurplus"]:
-        if col not in df.columns:
-            df[col] = 0
+    df = df.copy()
 
+    if "stock_id" not in df.columns:
+        return pd.DataFrame(columns=expected_cols)
+    if "date" not in df.columns:
+        df["date"] = pd.NaT
+    if "year" not in df.columns:
+        df["year"] = np.nan
+    if "CashEarningsDistribution" not in df.columns:
+        df["CashEarningsDistribution"] = 0
+    if "CashStatutorySurplus" not in df.columns:
+        df["CashStatutorySurplus"] = 0
+
+    df["stock_id"] = df["stock_id"].astype(str)
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df["現金股利"] = pd.to_numeric(df["CashEarningsDistribution"], errors="coerce").fillna(0) + \
-                 pd.to_numeric(df["CashStatutorySurplus"], errors="coerce").fillna(0)
+
+    df["現金股利"] = (
+        pd.to_numeric(df["CashEarningsDistribution"], errors="coerce").fillna(0)
+        + pd.to_numeric(df["CashStatutorySurplus"], errors="coerce").fillna(0)
+    )
 
     df = df.sort_values(["stock_id", "date"]).groupby("stock_id", as_index=False).tail(1)
-    return df[["stock_id", "date", "year", "現金股利"]].copy()
+
+    for col in expected_cols:
+        if col not in df.columns:
+            df[col] = np.nan
+
+    return df[expected_cols].copy()
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def build_value_master(token: Optional[str] = None) -> pd.DataFrame:
+    info_df = get_tw_stock_info(token=token)
+    per_df = get_latest_per_table(token=token)
+    div_df = get_latest_dividend_table(token=token)
+
+    if info_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "stock_id",
+                "stock_name",
+                "type",
+                "industry_category",
+                "殖利率%",
+                "本益比",
+                "股價淨值比",
+                "現金股利",
+            ]
+        )
+
+    out = info_df.copy()
+
+    if not per_df.empty and "stock_id" in per_df.columns:
+        out = out.merge(
+            per_df[["stock_id", "殖利率%", "本益比", "股價淨值比"]],
+            how="left",
+            on="stock_id",
+        )
+    else:
+        out["殖利率%"] = np.nan
+        out["本益比"] = np.nan
+        out["股價淨值比"] = np.nan
+
+    if not div_df.empty and "stock_id" in div_df.columns:
+        out = out.merge(
+            div_df[["stock_id", "現金股利"]],
+            how="left",
+            on="stock_id",
+        )
+    else:
+        out["現金股利"] = np.nan
+
+    return out
+
+
+# =========================================================
+# 股價抓取
+# =========================================================
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_finmind_price(stock_id: str, token: Optional[str] = None, start_date: Optional[str] = None) -> pd.DataFrame:
     start_date = start_date or start_date_str(DEFAULT_START_DAYS)
@@ -294,7 +400,6 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["SMA20"] = SMAIndicator(close, window=20).sma_indicator()
     df["SMA50"] = SMAIndicator(close, window=50).sma_indicator()
     df["SMA200"] = SMAIndicator(close, window=200).sma_indicator()
-
     df["EMA12"] = EMAIndicator(close, window=12).ema_indicator()
     df["EMA26"] = EMAIndicator(close, window=26).ema_indicator()
 
@@ -813,24 +918,6 @@ def make_rsi_chart(df: pd.DataFrame, title: str) -> go.Figure:
 
 
 # =========================================================
-# 併表：價值資料
-# =========================================================
-@st.cache_data(ttl=1800, show_spinner=False)
-def build_value_master(token: Optional[str] = None) -> pd.DataFrame:
-    info_df = get_tw_stock_info(token=token)
-    per_df = get_latest_per_table(token=token)
-    div_df = get_latest_dividend_table(token=token)
-
-    if info_df.empty:
-        return pd.DataFrame()
-
-    out = info_df.merge(per_df, how="left", left_on="stock_id", right_on="stock_id")
-    out = out.merge(div_df[["stock_id", "現金股利"]], how="left", on="stock_id")
-    out["現金股利"] = pd.to_numeric(out["現金股利"], errors="coerce")
-    return out
-
-
-# =========================================================
 # 單檔分析
 # =========================================================
 def analyze_single_stock(
@@ -987,9 +1074,9 @@ def scan_all_tw_stocks(
 
 
 # =========================================================
-# 主畫面
+# 側欄
 # =========================================================
-st.title("📈 AI 股票量化分析系統 V10.1")
+st.title("📈 AI 股票量化分析系統 V10.1 穩定版")
 st.caption("資料來源：FinMind + Yahoo Finance ｜ 技術分析 + 價值分析 + AI決策引擎")
 
 with st.sidebar:
@@ -1005,7 +1092,7 @@ with st.sidebar:
     required_yield_pct = st.slider("合理殖利率假設（%）", min_value=2.0, max_value=10.0, value=5.0, step=0.5)
 
     st.markdown("---")
-    st.caption("全台股掃描會花一些時間；第一次最慢，之後快取會明顯加速。")
+    st.caption("全台股掃描第一次可能較久；之後快取會快很多。")
 
 mode = st.radio(
     "系統模式",
@@ -1014,7 +1101,22 @@ mode = st.radio(
 )
 
 with st.spinner("載入台股清單 / 價值資料中..."):
-    value_master = build_value_master(token=finmind_token if finmind_token else None)
+    try:
+        value_master = build_value_master(token=finmind_token if finmind_token else None)
+    except Exception as e:
+        st.error(f"載入價值資料失敗：{e}")
+        value_master = pd.DataFrame(
+            columns=[
+                "stock_id",
+                "stock_name",
+                "type",
+                "industry_category",
+                "殖利率%",
+                "本益比",
+                "股價淨值比",
+                "現金股利",
+            ]
+        )
 
 # =========================================================
 # 單一股票分析
@@ -1181,7 +1283,7 @@ elif mode == "🔎 Top 10 全台股掃描":
                 required_yield_pct=required_yield_pct,
                 value_master=value_master,
                 market_filter=market_filter,
-                top_n=top_n * 3,  # 先抓多一點，方便再過濾
+                top_n=top_n * 3,
                 progress_bar=progress_bar,
                 status_box=status_box,
             )
@@ -1216,33 +1318,30 @@ elif mode == "🔎 Top 10 全台股掃描":
             )
 
 # =========================================================
-# 說明
+# 系統說明
 # =========================================================
 else:
     st.markdown("## 系統說明")
     st.write(
         """
-這版已補上你要求的三個重點：
+這版已修正啟動就當掉的問題，重點如下：
 
-1. 單一股票加入價值分析  
-   - 殖利率
-   - 本益比
-   - 股價淨值比
-   - 現金股利
-   - 簡化合理價
+1. build_value_master 防呆
+   - 就算 TaiwanStockPER 或 TaiwanStockDividend 暫時抓不到
+   - App 也不會因 merge 缺 stock_id 而中斷
 
-2. Top 10 掃描改為全台股  
-   - 以上市 / 上櫃清單為基礎
-   - 掃描結果列出股價、殖利率、本益比、PBR、現金股利、買點、賣點
+2. 保留完整功能
+   - 單一股票分析
+   - 買賣點 / 停損 / 風險報酬比
+   - 殖利率 / 本益比 / PBR / 現金股利 / 合理價
+   - 全台股 Top 10 掃描
 
-3. 保留技術分析與買賣點  
-   - MACD / KD / RSI / 布林
-   - 當下買點 / 賣點 / 停損 / R:R
-   - AI 綜合評分
+3. 資料來源
+   - FinMind 優先
+   - Yahoo Finance 備援
 
 注意：
-- 全台股掃描第一次會比較慢。
-- 沒有 FinMind token 也能跑，但穩定度可能較差。
-- 殖利率 / 本益比 / PBR 主要來自 FinMind 的 TaiwanStockPER。
+- 第一次掃描全台股會較慢，之後快取會快很多
+- 若沒有 FinMind token，仍可用，但資料穩定度可能較差
         """
     )
