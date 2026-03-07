@@ -20,7 +20,6 @@ from ta.volatility import AverageTrueRange, BollingerBands
 try:
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.metrics import accuracy_score
-
     SKLEARN_OK = True
 except Exception:
     SKLEARN_OK = False
@@ -585,13 +584,11 @@ def heuristic_probability(df: pd.DataFrame, dy=np.nan, pe=np.nan) -> Tuple[float
     s = 0.0
     s += 0.8 if safe_float(last.get("MACD_hist"), 0) > 0 else -0.5
     s += 0.6 if safe_float(last.get("K"), 50) > safe_float(last.get("D"), 50) else -0.4
-
     rsi = safe_float(last.get("RSI"), 50)
     s += 0.7 if 35 <= rsi <= 60 else 0.2 if rsi < 35 else -0.5
     s += 0.5 if safe_float(last.get("VOL_RATIO"), 1) > 1.2 else 0.0
     s += 0.3 if not pd.isna(dy) and dy >= 3 else 0.0
     s += 0.3 if not pd.isna(pe) and pe < 18 else 0.0
-
     p = 1 / (1 + np.exp(-s))
     return float(p), "heuristic"
 
@@ -844,7 +841,14 @@ def equity_curve_chart(curve_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def scan_one_stock_fast(stock_id: str, stock_name: str, market_type: Optional[str], token: Optional[str]) -> Optional[dict]:
+def scan_one_stock_fast(
+    stock_id: str,
+    stock_name: str,
+    market_type: Optional[str],
+    token: Optional[str],
+    min_price: float,
+    min_volume_k: int,
+) -> Optional[dict]:
     try:
         df_raw, _ = load_price(stock_id, market_type, token)
         if df_raw.empty or len(df_raw) < 120:
@@ -864,6 +868,13 @@ def scan_one_stock_fast(stock_id: str, stock_name: str, market_type: Optional[st
         vol_ma20 = safe_float(df["Volume"].rolling(20).mean().iloc[-1], np.nan)
 
         if pd.isna(vol_ma20) or vol_ma20 <= 0:
+            return None
+
+        vol_ma20_k = vol_ma20 / 1000.0
+
+        if pd.isna(price) or price < min_price:
+            return None
+        if pd.isna(vol_ma20_k) or vol_ma20_k < min_volume_k:
             return None
         if (not pd.isna(atr_pct)) and atr_pct > 18:
             return None
@@ -954,6 +965,8 @@ def scan_universe(
     top_n: int,
     progress_bar,
     status_box,
+    min_price: float,
+    min_volume_k: int,
 ) -> pd.DataFrame:
     if universe is None or universe.empty:
         return pd.DataFrame()
@@ -961,7 +974,6 @@ def scan_universe(
     total = len(universe)
     candidate_size = min(max(top_n * 20, QUICK_CANDIDATE_SIZE), total)
 
-    # Phase 1 快篩
     quick_rows = []
     quick_tasks = []
     status_box.caption(f"第一階段快篩中：0/{total}")
@@ -974,6 +986,8 @@ def scan_universe(
                     row.get("stock_name", ""),
                     row.get("type", None),
                     token,
+                    min_price,
+                    min_volume_k,
                 )
             )
 
@@ -997,7 +1011,6 @@ def scan_universe(
     quick_df = pd.DataFrame(quick_rows).sort_values("fast_score", ascending=False).head(candidate_size)
     candidates = universe[universe["stock_id"].isin(quick_df["股票"].tolist())].copy()
 
-    # Phase 2 精算
     rows = []
     full_tasks = []
     cand_total = len(candidates)
@@ -1055,9 +1068,12 @@ with st.sidebar:
         finmind_token = st.secrets.get("FINMIND_TOKEN", "")
     except Exception:
         finmind_token = ""
+
     finmind_token = st.text_input("FinMind Token（可留空）", value=finmind_token, type="password")
     req_yield = st.slider("合理殖利率假設（%）", 2.0, 10.0, 5.0, 0.5)
     top_n = st.slider("Top 掃描顯示前 N 名", 5, 30, 10)
+    min_price = st.number_input("最低股價過濾", min_value=0.0, value=100.0, step=1.0)
+    min_volume_k = st.number_input("最低日均量過濾（張）", min_value=0, value=1000, step=100)
     market_filter = st.selectbox("掃描範圍", ["全部", "上市", "上櫃"], index=0)
     auto_after_close = st.toggle("收盤後自動掃描 Top10", value=True)
     st.caption(f"目前掃描執行緒：{MAX_SCAN_WORKERS}｜快篩候選池：{QUICK_CANDIDATE_SIZE}")
@@ -1089,6 +1105,8 @@ if auto_after_close and is_after_market_close_tw() and st.session_state.last_aut
         top_n,
         p,
         s,
+        min_price,
+        min_volume_k,
     )
     st.session_state.last_auto_scan_date = today_str
 
@@ -1220,7 +1238,15 @@ elif mode == "🔎 Top10機會掃描":
             st.info(f"本次掃描股票數：{len(universe)}")
             p = st.progress(0.0)
             s = st.empty()
-            result = scan_universe(universe, finmind_token if finmind_token else None, top_n, p, s)
+            result = scan_universe(
+                universe,
+                finmind_token if finmind_token else None,
+                top_n,
+                p,
+                s,
+                min_price,
+                min_volume_k,
+            )
 
             if result.empty:
                 st.warning("沒有掃描到可用結果")
@@ -1250,6 +1276,8 @@ elif mode == "🤖 AI 自動選股":
                 max(top_n * 3, 20),
                 p,
                 s,
+                min_price,
+                min_volume_k,
             )
 
             if result.empty:
