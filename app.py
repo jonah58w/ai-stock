@@ -985,6 +985,22 @@ if mode == "📊 單一股票分析":
                         st.plotly_chart(kd_chart(df.tail(220)), use_container_width=True)
                     st.plotly_chart(rsi_chart(df.tail(220)), use_container_width=True)
 
+                    st.markdown("## 買賣點分析")
+                    b1, b2, b3, b4 = st.columns(4)
+                    b1.metric("預估買點", format_num(buy, 2))
+                    b2.metric("預估賣點", format_num(sell, 2))
+                    b3.metric("停損", format_num(stop, 2))
+                    b4.metric("風險報酬比", format_num(rr, 2))
+
+                    st.markdown("## 趨勢圖與技術分析")
+                    st.plotly_chart(chart(df.tail(220)), use_container_width=True)
+                    lc, rc = st.columns(2)
+                    with lc:
+                        st.plotly_chart(macd_chart(df.tail(220)), use_container_width=True)
+                    with rc:
+                        st.plotly_chart(kd_chart(df.tail(220)), use_container_width=True)
+                    st.plotly_chart(rsi_chart(df.tail(220)), use_container_width=True)
+
                     st.caption(f"價值分析來源：{fund['source_note'] if fund['source_note'] else '無'}｜股價來源：{source}")
         except Exception as e:
             st.error(f"執行失敗：{e}")
