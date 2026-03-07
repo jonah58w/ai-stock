@@ -1036,6 +1036,35 @@ def analyze_single_stock(
 # =========================================================
 # 全台股掃描
 # =========================================================
+def get_fallback_universe() -> pd.DataFrame:
+    """
+    當 FinMind 台股清單抓不到時，至少提供一份可掃描名單，避免 Top 10 完全沒有結果。
+    """
+    data = [
+        ["2330", "台積電", "twse", "半導體"],
+        ["2317", "鴻海", "twse", "電子代工"],
+        ["2454", "聯發科", "twse", "IC 設計"],
+        ["2308", "台達電", "twse", "電源供應"],
+        ["2382", "廣達", "twse", "電子代工"],
+        ["2881", "富邦金", "twse", "金融保險"],
+        ["2882", "國泰金", "twse", "金融保險"],
+        ["2886", "兆豐金", "twse", "金融保險"],
+        ["2891", "中信金", "twse", "金融保險"],
+        ["0050", "元大台灣50", "twse", "ETF"],
+        ["0056", "元大高股息", "twse", "ETF"],
+        ["00878", "國泰永續高股息", "twse", "ETF"],
+        ["00919", "群益台灣精選高息", "twse", "ETF"],
+        ["2603", "長榮", "twse", "航運"],
+        ["2609", "陽明", "twse", "航運"],
+        ["1301", "台塑", "twse", "塑化"],
+        ["1303", "南亞", "twse", "塑化"],
+        ["2002", "中鋼", "twse", "鋼鐵"],
+        ["1216", "統一", "twse", "食品"],
+        ["6488", "環球晶", "tpex", "半導體"],
+    ]
+    return pd.DataFrame(data, columns=["stock_id", "stock_name", "type", "industry_category"])
+
+
 def scan_all_tw_stocks(
     token: Optional[str],
     required_yield_pct: float,
@@ -1046,6 +1075,15 @@ def scan_all_tw_stocks(
     status_box,
 ) -> pd.DataFrame:
     universe = value_master.copy()
+
+    # 如果主清單抓不到，改用內建 fallback 名單，確保掃描可用
+    if universe.empty:
+        universe = get_fallback_universe()
+        universe["殖利率%"] = np.nan
+        universe["本益比"] = np.nan
+        universe["股價淨值比"] = np.nan
+        universe["現金股利"] = np.nan
+
     if market_filter == "上市":
         universe = universe[universe["type"] == "twse"].copy()
     elif market_filter == "上櫃":
@@ -1066,7 +1104,7 @@ def scan_all_tw_stocks(
 
         try:
             price_df, source = load_price(stock_id, market_type, token)
-            if price_df.empty or len(price_df) < 80:
+            if price_df.empty or len(price_df) < 40:
                 continue
 
             price_df = add_indicators(price_df)
@@ -1079,7 +1117,7 @@ def scan_all_tw_stocks(
             pbr = row.get("股價淨值比", np.nan)
             cash_dividend = row.get("現金股利", np.nan)
 
-            # 用 FinMind 單檔資料再補一次，避免 bulk table 缺值
+            # 用 FinMind 單檔資料補值
             fin_single = fetch_finmind_single_value(stock_id, token=token)
             if pd.isna(dy):
                 dy = fin_single["殖利率%"]
@@ -1090,9 +1128,19 @@ def scan_all_tw_stocks(
             if pd.isna(cash_dividend):
                 cash_dividend = fin_single["現金股利"]
 
-            # 最後再用現金股利 / 股價回推殖利率
-            if pd.isna(dy) and pd.notna(cash_dividend) and price > 0:
-                dy = cash_dividend / price * 100
+            # Yahoo fallback 再補一次
+            yfund = get_yahoo_fundamentals(stock_id, market_type)
+            if pd.isna(per):
+                per = yfund["trailing_pe"] if pd.notna(yfund["trailing_pe"]) else yfund["forward_pe"]
+            if pd.isna(pbr):
+                pbr = yfund["pb"]
+            if pd.isna(cash_dividend):
+                cash_dividend = yfund["dividend_rate"]
+            if pd.isna(dy):
+                if pd.notna(yfund["dividend_yield_pct"]):
+                    dy = yfund["dividend_yield_pct"]
+                elif pd.notna(cash_dividend) and price > 0:
+                    dy = cash_dividend / price * 100
 
             fair_price = compute_fair_price_by_yield(cash_dividend, required_yield_pct)
             pred = predict_trade_points(price_df)
@@ -1244,6 +1292,9 @@ if mode == "📊 單一股票分析":
                 v3.metric("股價淨值比", format_num(result["pbr"], 2))
                 v4.metric("現金股利", format_num(result["cash_dividend"], 2))
                 v5.metric("簡化合理價", format_num(result["fair_price"], 2))
+
+                if pd.isna(result["dividend_yield_pct"]) and pd.isna(result["per"]) and pd.isna(result["pbr"]) and pd.isna(result["cash_dividend"]):
+                    st.warning("此股票目前無法從 FinMind 或 Yahoo 抓到完整價值分析欄位，請先確認 FinMind Token 是否可用，或改測其他股票。")
                 st.caption("價值分析優先使用 FinMind；若缺值，單一股票會自動改用 Yahoo Finance 補 PE / 股利 / 殖利率。")
 
                 st.markdown("## 風險與停損")
