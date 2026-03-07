@@ -1,6 +1,5 @@
 # ==============================================================
-# AI 股票量化分析系統 V11.1 PRO
-# 完整修正版（單一股票價值分析已修正）
+# AI 股票量化分析系統 V11 PRO（穩定可執行版）
 # 直接完整覆蓋 app.py 使用
 # ==============================================================
 
@@ -27,7 +26,7 @@ from ta.volatility import AverageTrueRange, BollingerBands
 # ==============================================================
 
 st.set_page_config(
-    page_title="AI 股票量化分析系統 V11.1 PRO",
+    page_title="AI 股票量化分析系統 V11 PRO",
     page_icon="📈",
     layout="wide",
 )
@@ -133,12 +132,10 @@ def finmind_get(dataset: str, token: Optional[str] = None, **params) -> pd.DataF
         )
         if resp.status_code != 200:
             return pd.DataFrame()
-
         payload = resp.json()
         data = payload.get("data", [])
         if not data:
             return pd.DataFrame()
-
         return pd.DataFrame(data)
     except Exception:
         return pd.DataFrame()
@@ -148,7 +145,6 @@ def finmind_get(dataset: str, token: Optional[str] = None, **params) -> pd.DataF
 def get_tw_stock_info(token: Optional[str] = None) -> pd.DataFrame:
     df = finmind_get("TaiwanStockInfo", token=token)
     expected_cols = ["stock_id", "stock_name", "type", "industry_category"]
-
     if df.empty:
         return pd.DataFrame(columns=expected_cols)
 
@@ -174,21 +170,17 @@ def load_finmind_price(stock_id: str, token: Optional[str] = None, start_date: O
         data_id=normalize_symbol(stock_id),
         start_date=start_date,
     )
-
     if df.empty:
         return pd.DataFrame()
 
-    df = df.rename(
-        columns={
-            "date": "Date",
-            "open": "Open",
-            "max": "High",
-            "min": "Low",
-            "close": "Close",
-            "Trading_Volume": "Volume",
-        }
-    )
-
+    df = df.rename(columns={
+        "date": "Date",
+        "open": "Open",
+        "max": "High",
+        "min": "Low",
+        "close": "Close",
+        "Trading_Volume": "Volume",
+    })
     keep = [c for c in ["Date", "Open", "High", "Low", "Close", "Volume"] if c in df.columns]
     df = df[keep].copy()
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
@@ -203,7 +195,14 @@ def load_finmind_price(stock_id: str, token: Optional[str] = None, start_date: O
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_yahoo_price(stock_id: str, market_type: Optional[str] = None, period: str = "2y") -> Tuple[pd.DataFrame, str]:
+    """
+    Yahoo 抓價加強版：
+    1. 先用 download
+    2. download 失敗再用 Ticker.history
+    3. 自動試 .TW / .TWO
+    """
     for ysym in yahoo_symbol_candidates(stock_id, market_type):
+        # 方法 1：yf.download
         try:
             df = yf.download(
                 ysym,
@@ -217,34 +216,60 @@ def load_yahoo_price(stock_id: str, market_type: Optional[str] = None, period: s
             if not df.empty:
                 return df, ysym
         except Exception:
-            continue
+            pass
+
+        # 方法 2：Ticker.history
+        try:
+            tk = yf.Ticker(ysym)
+            df = tk.history(period=period, interval="1d", auto_adjust=False)
+            df = _normalize_ohlcv(df)
+            if not df.empty:
+                return df, ysym
+        except Exception:
+            pass
+
     return pd.DataFrame(), ""
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_price(stock_id: str, market_type: Optional[str], token: Optional[str]) -> Tuple[pd.DataFrame, str]:
-    df = load_finmind_price(stock_id, token=token)
+    """
+    股價抓取順序：
+    1. FinMind
+    2. Yahoo .TW / .TWO
+    3. 若使用者輸入已帶 .TW / .TWO，直接再試一次
+    """
+    sid = normalize_symbol(stock_id)
+
+    df = load_finmind_price(sid, token=token)
     if not df.empty:
         return df, "FinMind"
 
-    ydf, ysym = load_yahoo_price(stock_id, market_type=market_type)
+    ydf, ysym = load_yahoo_price(sid, market_type=market_type)
     if not ydf.empty:
         return ydf, f"Yahoo ({ysym})"
+
+    # 最後保底：若使用者本來就輸入完整後綴，直接試 history
+    raw = str(stock_id).strip().upper()
+    if raw.endswith(".TW") or raw.endswith(".TWO"):
+        try:
+            tk = yf.Ticker(raw)
+            ydf = tk.history(period="2y", interval="1d", auto_adjust=False)
+            ydf = _normalize_ohlcv(ydf)
+            if not ydf.empty:
+                return ydf, f"Yahoo ({raw})"
+        except Exception:
+            pass
 
     return pd.DataFrame(), "無"
 
 
 # ==============================================================
-# 單檔基本面（修正重點）
-# 順序：
-# 1. FinMind 單檔 PER
-# 2. FinMind 單檔 Dividend
-# 3. Yahoo fundamentals 補值
-# 4. 若殖利率缺值，用 dividend / price 自算
+# 基本面資料（Yahoo 為主，單檔穩定）
 # ==============================================================
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def load_fundamental(stock_id: str, market_type: Optional[str] = None, token: Optional[str] = None) -> Dict[str, object]:
+def load_fundamental(stock_id: str, market_type: Optional[str] = None) -> Dict[str, object]:
     out = {
         "pe": np.nan,
         "pb": np.nan,
@@ -253,99 +278,39 @@ def load_fundamental(stock_id: str, market_type: Optional[str] = None, token: Op
         "dividend": np.nan,
         "yield": np.nan,
         "symbol_used": "",
-        "source_note": "",
     }
 
-    sid = normalize_symbol(stock_id)
-
-    # 1) FinMind 單檔 PER / PBR / Yield
-    try:
-        per_df = finmind_get(
-            "TaiwanStockPER",
-            token=token,
-            data_id=sid,
-            start_date=(date.today() - timedelta(days=90)).strftime("%Y-%m-%d"),
-        )
-        if not per_df.empty:
-            if "date" in per_df.columns:
-                per_df["date"] = pd.to_datetime(per_df["date"], errors="coerce")
-                per_df = per_df.sort_values("date")
-            row = per_df.iloc[-1]
-
-            if "PER" in per_df.columns:
-                out["pe"] = safe_float(row.get("PER"), np.nan)
-            if "PBR" in per_df.columns:
-                out["pb"] = safe_float(row.get("PBR"), np.nan)
-            if "dividend_yield" in per_df.columns:
-                out["yield"] = safe_float(row.get("dividend_yield"), np.nan)
-
-            out["source_note"] += "FinMind PER; "
-    except Exception:
-        pass
-
-    # 2) FinMind 單檔股利
-    try:
-        div_df = finmind_get(
-            "TaiwanStockDividend",
-            token=token,
-            data_id=sid,
-            start_date=(date.today() - timedelta(days=1200)).strftime("%Y-%m-%d"),
-        )
-        if not div_df.empty:
-            if "date" in div_df.columns:
-                div_df["date"] = pd.to_datetime(div_df["date"], errors="coerce")
-                div_df = div_df.sort_values("date")
-
-            if "CashEarningsDistribution" not in div_df.columns:
-                div_df["CashEarningsDistribution"] = 0
-            if "CashStatutorySurplus" not in div_df.columns:
-                div_df["CashStatutorySurplus"] = 0
-
-            div_df["現金股利"] = (
-                pd.to_numeric(div_df["CashEarningsDistribution"], errors="coerce").fillna(0)
-                + pd.to_numeric(div_df["CashStatutorySurplus"], errors="coerce").fillna(0)
-            )
-
-            row = div_df.iloc[-1]
-            out["dividend"] = safe_float(row.get("現金股利"), np.nan)
-            out["source_note"] += "FinMind Dividend; "
-    except Exception:
-        pass
-
-    # 3) Yahoo fundamentals 補值
     for ysym in yahoo_symbol_candidates(stock_id, market_type):
         try:
             tk = yf.Ticker(ysym)
             info = tk.info or {}
 
-            if pd.isna(out["pe"]):
-                pe = safe_float(info.get("trailingPE"), np.nan)
-                if pd.isna(pe):
-                    pe = safe_float(info.get("forwardPE"), np.nan)
-                out["pe"] = pe
+            pe = safe_float(info.get("trailingPE"), np.nan)
+            if pd.isna(pe):
+                pe = safe_float(info.get("forwardPE"), np.nan)
 
-            if pd.isna(out["pb"]):
-                out["pb"] = safe_float(info.get("priceToBook"), np.nan)
+            pb = safe_float(info.get("priceToBook"), np.nan)
+            eps = safe_float(info.get("trailingEps"), np.nan)
 
-            if pd.isna(out["eps"]):
-                out["eps"] = safe_float(info.get("trailingEps"), np.nan)
+            roe = info.get("returnOnEquity")
+            roe = safe_float(roe, np.nan) * 100 if roe is not None else np.nan
 
-            if pd.isna(out["roe"]):
-                roe = info.get("returnOnEquity")
-                if roe is not None:
-                    out["roe"] = safe_float(roe, np.nan) * 100
+            dividend = safe_float(info.get("dividendRate"), np.nan)
+            dy = info.get("dividendYield")
+            dy = safe_float(dy, np.nan) * 100 if dy is not None else np.nan
 
-            if pd.isna(out["dividend"]):
-                out["dividend"] = safe_float(info.get("dividendRate"), np.nan)
+            out.update({
+                "pe": pe,
+                "pb": pb,
+                "eps": eps,
+                "roe": roe,
+                "dividend": dividend,
+                "yield": dy,
+                "symbol_used": ysym,
+            })
 
-            if pd.isna(out["yield"]):
-                dy = info.get("dividendYield")
-                if dy is not None:
-                    out["yield"] = safe_float(dy, np.nan) * 100
-
-            out["symbol_used"] = ysym
-            out["source_note"] += f"Yahoo {ysym}; "
-            break
+            if not all(pd.isna(out[k]) for k in ["pe", "pb", "eps", "dividend", "yield"]):
+                return out
         except Exception:
             continue
 
@@ -524,19 +489,8 @@ def trade_point(df: pd.DataFrame) -> Tuple[Optional[float], Optional[float], Opt
     if pd.isna(price):
         return None, None, None, None
 
-    buy_candidates = [
-        x for x in [
-            safe_float(last.get("BBL")),
-            safe_float(last.get("SMA20")),
-            safe_float(last.get("SMA50")),
-        ] if not pd.isna(x)
-    ]
-    sell_candidates = [
-        x for x in [
-            safe_float(last.get("BBH")),
-            safe_float(df["Close"].rolling(60).max().iloc[-1]),
-        ] if not pd.isna(x)
-    ]
+    buy_candidates = [x for x in [safe_float(last.get("BBL")), safe_float(last.get("SMA20")), safe_float(last.get("SMA50"))] if not pd.isna(x)]
+    sell_candidates = [x for x in [safe_float(last.get("BBH")), safe_float(df["Close"].rolling(60).max().iloc[-1])] if not pd.isna(x)]
 
     buy = min(buy_candidates) if buy_candidates else None
     sell = max(sell_candidates) if sell_candidates else None
@@ -603,7 +557,7 @@ def get_fallback_universe() -> pd.DataFrame:
 # 側欄
 # ==============================================================
 
-st.title("📈 AI 股票量化分析系統 V11.1 PRO")
+st.title("📈 AI 股票量化分析系統 V11 PRO")
 st.caption("FinMind + Yahoo Finance ｜ 技術分析 + 價值分析 + AI決策引擎")
 
 with st.sidebar:
@@ -635,7 +589,20 @@ if mode == "單一股票分析":
     if st.button("開始分析"):
         try:
             stock_id = normalize_symbol(symbol)
-            df_raw, source = load_price(stock_id, None, finmind_token if finmind_token else None)
+
+            # 先從台股清單找 market_type，找不到就用 fallback 名單
+            market_type = None
+            try:
+                info_df = get_tw_stock_info(finmind_token if finmind_token else None)
+                if info_df.empty:
+                    info_df = get_fallback_universe()
+                hit = info_df[info_df["stock_id"] == stock_id]
+                if not hit.empty:
+                    market_type = hit.iloc[0]["type"]
+            except Exception:
+                market_type = None
+
+            df_raw, source = load_price(stock_id, market_type, finmind_token if finmind_token else None)
 
             if df_raw is None or df_raw.empty:
                 st.error("找不到股票資料")
@@ -644,12 +611,7 @@ if mode == "單一股票分析":
                 if df.empty:
                     st.error("技術指標計算失敗，請稍後再試。")
                 else:
-                    fund = load_fundamental(
-                        stock_id,
-                        market_type=None,
-                        token=finmind_token if finmind_token else None,
-                    )
-
+                    fund = load_fundamental(stock_id)
                     price = float(df.iloc[-1]["Close"])
 
                     dy = fund["yield"]
@@ -693,15 +655,8 @@ if mode == "單一股票分析":
                     b3.metric("停損", format_num(stop, 2))
                     b4.metric("R/R", format_num(rr, 2))
 
-                    st.caption(
-                        f"價值分析來源：{fund['source_note'] if fund['source_note'] else '無'}｜股價來源：{source}"
-                    )
-
-                    if pd.isna(dy) and pd.isna(pe) and pd.isna(pb) and pd.isna(eps) and pd.isna(roe):
-                        st.warning("此股票目前無法抓到可用價值分析欄位，請檢查資料來源或稍後再試。")
-
+                    st.caption(f"價值分析來源：Yahoo fundamentals；股價來源：{source}")
                     st.plotly_chart(chart(df), use_container_width=True)
-
         except Exception as e:
             st.error(f"執行失敗：{e}")
             st.code(traceback.format_exc())
@@ -730,7 +685,6 @@ else:
             stock_id = row["stock_id"]
             stock_name = row.get("stock_name", "")
             market_type = row.get("type", None)
-
             status.caption(f"掃描中：{i+1}/{len(universe)} {stock_id} {stock_name}")
             progress.progress((i + 1) / max(len(universe), 1))
 
@@ -743,12 +697,7 @@ else:
                 if df.empty:
                     continue
 
-                fund = load_fundamental(
-                    stock_id,
-                    market_type=market_type,
-                    token=finmind_token if finmind_token else None,
-                )
-
+                fund = load_fundamental(stock_id, market_type)
                 price = float(df.iloc[-1]["Close"])
 
                 dy = fund["yield"]
@@ -761,18 +710,16 @@ else:
 
                 score = ai_score(df, dy, pe, pb, roe)
 
-                rows.append(
-                    {
-                        "股票": stock_id,
-                        "名稱": stock_name,
-                        "股價": round(price, 2),
-                        "AI分數": score,
-                        "殖利率": round(dy, 2) if not pd.isna(dy) else None,
-                        "本益比": round(pe, 2) if not pd.isna(pe) else None,
-                        "股價淨值比": round(pb, 2) if not pd.isna(pb) else None,
-                        "ROE": round(roe, 2) if not pd.isna(roe) else None,
-                    }
-                )
+                rows.append({
+                    "股票": stock_id,
+                    "名稱": stock_name,
+                    "股價": round(price, 2),
+                    "AI分數": score,
+                    "殖利率": round(dy, 2) if not pd.isna(dy) else None,
+                    "本益比": round(pe, 2) if not pd.isna(pe) else None,
+                    "股價淨值比": round(pb, 2) if not pd.isna(pb) else None,
+                    "ROE": round(roe, 2) if not pd.isna(roe) else None,
+                })
             except Exception:
                 continue
 
