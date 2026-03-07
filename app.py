@@ -577,6 +577,18 @@ def backtest_score_strategy(df: pd.DataFrame, dy=np.nan, pe=np.nan, pb=np.nan, r
 # =============================
 # AI 自動選股與資金流
 # =============================
+def dividend_valuation(dividend: Optional[float], req_yield_pct: float) -> Optional[float]:
+    if dividend is None or pd.isna(dividend) or dividend <= 0 or req_yield_pct <= 0:
+        return None
+    return dividend / (req_yield_pct / 100.0)
+
+
+def eps_valuation(eps: Optional[float], fair_pe: float = 15.0) -> Optional[float]:
+    if eps is None or pd.isna(eps) or eps <= 0:
+        return None
+    return eps * fair_pe
+
+
 def value_score(dy: float, pe: float, pb: float, roe: float) -> float:
     score = 50.0
     if not pd.isna(dy):
