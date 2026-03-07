@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 import requests
 import yfinance as yf
+import math
 import plotly.graph_objects as go
 
 from datetime import datetime, timedelta
@@ -43,16 +44,45 @@ def safe(v):
 # Price Loader
 # ==============================================================
 
+def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+
+    if df is None or len(df) == 0:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    # yfinance sometimes returns MultiIndex columns
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+
+    # convert single-column DataFrame to Series-safe numeric columns
+    wanted = ["Open", "High", "Low", "Close", "Volume"]
+    keep = [c for c in wanted if c in df.columns]
+    if len(keep) < 4:
+        return pd.DataFrame()
+
+    df = df[keep].copy()
+    for c in keep:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    df.index = pd.to_datetime(df.index, errors="coerce")
+    df = df.dropna(subset=[c for c in ["Open", "High", "Low", "Close"] if c in df.columns])
+    return df
+
+
 def load_price(symbol):
 
     try:
-        df=yf.download(symbol+".TW",period="2y",progress=False)
-
+        df = yf.download(symbol + ".TW", period="2y", progress=False, auto_adjust=False, threads=False)
+        df = _normalize_ohlcv(df)
         if df.empty:
-            df=yf.download(symbol+".TWO",period="2y",progress=False)
-
+            df = yf.download(symbol + ".TWO", period="2y", progress=False, auto_adjust=False, threads=False)
+            df = _normalize_ohlcv(df)
         if df.empty:
             return None
+        return df
+    except:
+        return None
 
         return df
 
@@ -65,33 +95,41 @@ def load_price(symbol):
 
 def load_fundamental(symbol):
 
-    out={
-        "pe":np.nan,
-        "pb":np.nan,
-        "eps":np.nan,
-        "roe":np.nan,
-        "dividend":np.nan,
-        "yield":np.nan
+    out = {
+        "pe": np.nan,
+        "pb": np.nan,
+        "eps": np.nan,
+        "roe": np.nan,
+        "dividend": np.nan,
+        "yield": np.nan,
     }
 
-    try:
+    for suffix in [".TW", ".TWO"]:
+        try:
+            tk = yf.Ticker(symbol + suffix)
+            info = tk.info or {}
 
-        tk=yf.Ticker(symbol+".TW")
-        info=tk.info
+            out["pe"] = safe(info.get("trailingPE"))
+            if np.isnan(out["pe"]):
+                out["pe"] = safe(info.get("forwardPE"))
 
-        out["pe"]=safe(info.get("trailingPE"))
-        out["pb"]=safe(info.get("priceToBook"))
-        out["eps"]=safe(info.get("trailingEps"))
-        out["roe"]=safe(info.get("returnOnEquity"))*100
-        out["dividend"]=safe(info.get("dividendRate"))
+            out["pb"] = safe(info.get("priceToBook"))
+            out["eps"] = safe(info.get("trailingEps"))
 
-        dy=info.get("dividendYield")
+            roe = info.get("returnOnEquity")
+            if roe is not None:
+                out["roe"] = safe(roe) * 100
 
-        if dy:
-            out["yield"]=safe(dy)*100
+            out["dividend"] = safe(info.get("dividendRate"))
+            dy = info.get("dividendYield")
+            if dy is not None:
+                out["yield"] = safe(dy) * 100
 
-    except:
-        pass
+            # if at least one core field exists, accept
+            if not all(np.isnan(out[k]) for k in ["pe", "pb", "eps", "dividend", "yield"]):
+                return out
+        except:
+            continue
 
     return out
 
@@ -101,38 +139,42 @@ def load_fundamental(symbol):
 
 def add_indicators(df):
 
-    close=df["Close"]
+    df = _normalize_ohlcv(df)
+    if df is None or df.empty or len(df) < 35:
+        return pd.DataFrame()
 
-    macd=MACD(close)
+    df = df.copy()
 
-    df["MACD"]=macd.macd()
-    df["MACD_signal"]=macd.macd_signal()
+    close = pd.Series(df["Close"], index=df.index, dtype="float64")
+    high = pd.Series(df["High"], index=df.index, dtype="float64")
+    low = pd.Series(df["Low"], index=df.index, dtype="float64")
 
-    rsi=RSIIndicator(close)
-    df["RSI"]=rsi.rsi()
+    macd = MACD(close)
+    df["MACD"] = pd.Series(macd.macd(), index=df.index)
+    df["MACD_signal"] = pd.Series(macd.macd_signal(), index=df.index)
 
-    stoch=StochasticOscillator(df["High"],df["Low"],close)
+    rsi = RSIIndicator(close)
+    df["RSI"] = pd.Series(rsi.rsi(), index=df.index)
 
-    df["K"]=stoch.stoch()
-    df["D"]=stoch.stoch_signal()
+    stoch = StochasticOscillator(high, low, close)
+    df["K"] = pd.Series(stoch.stoch(), index=df.index)
+    df["D"] = pd.Series(stoch.stoch_signal(), index=df.index)
 
-    bb=BollingerBands(close)
+    bb = BollingerBands(close)
+    df["BBH"] = pd.Series(bb.bollinger_hband(), index=df.index)
+    df["BBL"] = pd.Series(bb.bollinger_lband(), index=df.index)
 
-    df["BBH"]=bb.bollinger_hband()
-    df["BBL"]=bb.bollinger_lband()
+    atr = AverageTrueRange(high, low, close)
+    df["ATR"] = pd.Series(atr.average_true_range(), index=df.index)
 
-    atr=AverageTrueRange(df["High"],df["Low"],close)
+    sma20 = SMAIndicator(close, 20)
+    df["SMA20"] = pd.Series(sma20.sma_indicator(), index=df.index)
 
-    df["ATR"]=atr.average_true_range()
+    sma50 = SMAIndicator(close, 50)
+    df["SMA50"] = pd.Series(sma50.sma_indicator(), index=df.index)
 
-    sma20=SMAIndicator(close,20)
-    df["SMA20"]=sma20.sma_indicator()
-
-    sma50=SMAIndicator(close,50)
-    df["SMA50"]=sma50.sma_indicator()
-
-    sma200=SMAIndicator(close,200)
-    df["SMA200"]=sma200.sma_indicator()
+    sma200 = SMAIndicator(close, 200)
+    df["SMA200"] = pd.Series(sma200.sma_indicator(), index=df.index)
 
     return df
 
@@ -253,74 +295,74 @@ if mode=="單一股票分析":
 
     if st.button("開始分析"):
 
-        df=load_price(symbol)
+        df = load_price(symbol)
 
-        if df is None:
-
+        if df is None or len(df) == 0:
             st.error("找不到股票資料")
 
         else:
 
-            df=add_indicators(df)
+            df = add_indicators(df)
 
-            fund=load_fundamental(symbol)
+            if df.empty:
+                st.error("技術指標計算失敗，請改測其他股票或稍後再試。")
+            else:
+                fund = load_fundamental(symbol)
 
-            price=df.iloc[-1]["Close"]
+                price = float(df.iloc[-1]["Close"])
 
-            dy=fund["yield"]
+                dy = fund["yield"]
+                if np.isnan(dy) and not np.isnan(fund["dividend"]) and price > 0:
+                    dy = fund["dividend"] / price * 100
 
-            if dy is None and fund["dividend"]:
+                pe = fund["pe"]
+                pb = fund["pb"]
+                eps = fund["eps"]
+                roe = fund["roe"]
 
-                dy=fund["dividend"]/price*100
+                fair_div = dividend_valuation(fund["dividend"], 5)
+                fair_eps = eps_valuation(eps, 15)
 
-            pe=fund["pe"]
-            pb=fund["pb"]
-            eps=fund["eps"]
-            roe=fund["roe"]
+                buy, sell, stop, rr = trade_point(df)
 
-            fair_div=dividend_valuation(fund["dividend"],5)
-            fair_eps=eps_valuation(eps,15)
+                score = ai_score(df, 0 if np.isnan(dy) else dy, 999 if np.isnan(pe) else pe, 999 if np.isnan(pb) else pb)
 
-            buy,sell,stop,rr=trade_point(df)
+                st.markdown("## 股票決策總覽")
 
-            score=ai_score(df,dy,pe,pb)
+                c1, c2, c3, c4 = st.columns(4)
 
-            st.markdown("## 股票決策總覽")
+                c1.metric("股票", symbol)
+                c2.metric("目前價格", round(price, 2))
+                c3.metric("AI綜合評分", score)
+                c4.metric("AI建議", "買進" if score > 60 else "觀察")
 
-            c1,c2,c3,c4=st.columns(4)
+                st.markdown("## 價值分析")
 
-            c1.metric("股票",symbol)
-            c2.metric("目前價格",round(price,2))
-            c3.metric("AI綜合評分",score)
-            c4.metric("AI建議","買進" if score>60 else "觀察")
+                v1, v2, v3, v4, v5 = st.columns(5)
 
-            st.markdown("## 價值分析")
+                v1.metric("殖利率", round(dy, 2) if not np.isnan(dy) else "-")
+                v2.metric("本益比", round(pe, 2) if not np.isnan(pe) else "-")
+                v3.metric("股價淨值比", round(pb, 2) if not np.isnan(pb) else "-")
+                v4.metric("EPS", round(eps, 2) if not np.isnan(eps) else "-")
+                v5.metric("ROE", round(roe, 2) if not np.isnan(roe) else "-")
 
-            v1,v2,v3,v4,v5=st.columns(5)
+                st.markdown("## 合理價估值")
 
-            v1.metric("殖利率",round(dy,2) if dy else "-")
-            v2.metric("本益比",round(pe,2) if pe else "-")
-            v3.metric("股價淨值比",round(pb,2) if pb else "-")
-            v4.metric("EPS",round(eps,2) if eps else "-")
-            v5.metric("ROE",round(roe,2) if roe else "-")
+                a1, a2 = st.columns(2)
 
-            st.markdown("## 合理價估值")
+                a1.metric("股利估值", round(fair_div, 2) if fair_div else "-")
+                a2.metric("EPS估值", round(fair_eps, 2) if fair_eps else "-")
 
-            a1,a2=st.columns(2)
+                st.markdown("## 買賣點")
 
-            a1.metric("股利估值",round(fair_div,2) if fair_div else "-")
-            a2.metric("EPS估值",round(fair_eps,2) if fair_eps else "-")
+                b1, b2, b3, b4 = st.columns(4)
 
-            st.markdown("## 買賣點")
+                b1.metric("預估買點", round(buy, 2))
+                b2.metric("預估賣點", round(sell, 2))
+                b3.metric("停損", round(stop, 2))
+                b4.metric("R/R", round(rr, 2) if rr else "-")
 
-            b1,b2,b3,b4=st.columns(4)
-
-            b1.metric("預估買點",round(buy,2))
-            b2.metric("預估賣點",round(sell,2))
-            b3.metric("停損",round(stop,2))
-            b4.metric("R/R",round(rr,2) if rr else "-")
-
-            st.plotly_chart(chart(df),use_container_width=True)
+                st.plotly_chart(chart(df), use_container_width=True)
 
 # ==============================================================
 # Top 10 Scan
@@ -339,47 +381,44 @@ else:
 
     if st.button("開始掃描全台股"):
 
-        rows=[]
+        rows = []
 
         for s in universe:
-
-            df=load_price(s)
-
-            if df is None:
+            df = load_price(s)
+            if df is None or len(df) == 0:
                 continue
 
-            df=add_indicators(df)
+            df = add_indicators(df)
+            if df.empty:
+                continue
 
-            fund=load_fundamental(s)
+            fund = load_fundamental(s)
+            price = float(df.iloc[-1]["Close"])
 
-            price=df.iloc[-1]["Close"]
+            dy = fund["yield"]
+            if np.isnan(dy) and not np.isnan(fund["dividend"]) and price > 0:
+                dy = fund["dividend"] / price * 100
 
-            dy=fund["yield"]
+            pe = fund["pe"]
+            pb = fund["pb"]
 
-            if dy is None and fund["dividend"]:
-                dy=fund["dividend"]/price*100
-
-            pe=fund["pe"]
-            pb=fund["pb"]
-
-            score=ai_score(df,dy,pe,pb)
+            score = ai_score(df, 0 if np.isnan(dy) else dy, 999 if np.isnan(pe) else pe, 999 if np.isnan(pb) else pb)
 
             rows.append({
-
-"股票":s,
-"股價":round(price,2),
-"AI分數":score,
-"殖利率":round(dy,2) if dy else None,
-"本益比":round(pe,2) if pe else None,
-"股價淨值比":round(pb,2) if pb else None
-
+                "股票": s,
+                "股價": round(price, 2),
+                "AI分數": score,
+                "殖利率": round(dy, 2) if not np.isnan(dy) else None,
+                "本益比": round(pe, 2) if not np.isnan(pe) else None,
+                "股價淨值比": round(pb, 2) if not np.isnan(pb) else None,
             })
 
-        df=pd.DataFrame(rows)
-
-        df=df.sort_values("AI分數",ascending=False)
-
-        st.dataframe(df.head(10))
+        if len(rows) == 0:
+            st.warning("沒有掃描到可用結果，請稍後再試。")
+        else:
+            df = pd.DataFrame(rows)
+            df = df.sort_values("AI分數", ascending=False)
+            st.dataframe(df.head(10), use_container_width=True)
 
 # ==============================================================
 # END
