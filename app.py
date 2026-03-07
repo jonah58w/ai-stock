@@ -1,5 +1,5 @@
 # ==============================================================
-# AI 股票量化分析系統 V11.2 PRO（穩定修正版）
+# AI 股票量化分析系統 V12 PRO（穩定修正版）
 # 直接完整覆蓋 app.py 使用
 #
 # 修正重點：
@@ -30,7 +30,7 @@ from ta.volatility import AverageTrueRange, BollingerBands
 # ==============================================================
 
 st.set_page_config(
-    page_title="AI 股票量化分析系統 V11.2 PRO",
+    page_title="AI 股票量化分析系統 V12 PRO",
     page_icon="📈",
     layout="wide",
 )
@@ -246,8 +246,7 @@ def load_price(stock_id: str, market_type: Optional[str], token: Optional[str]) 
     return pd.DataFrame(), "無"
 
 # ==============================================================
-# 單檔價值分析（修正核心）
-# FinMind 單檔 PER / 股利 -> Yahoo 補值 -> 股利/股價回推殖利率
+# 價值分析（單檔）
 # ============================================================== 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -264,7 +263,7 @@ def load_fundamental(stock_id: str, market_type: Optional[str] = None, token: Op
         "source_note": "",
     }
 
-    # 1) FinMind 單檔 PER / PBR / Yield
+    # FinMind 單檔 PER / PBR / Yield
     try:
         per_df = finmind_get(
             "TaiwanStockPER",
@@ -287,7 +286,7 @@ def load_fundamental(stock_id: str, market_type: Optional[str] = None, token: Op
     except Exception:
         pass
 
-    # 2) FinMind 單檔股利
+    # FinMind 單檔股利
     try:
         div_df = finmind_get(
             "TaiwanStockDividend",
@@ -313,7 +312,7 @@ def load_fundamental(stock_id: str, market_type: Optional[str] = None, token: Op
     except Exception:
         pass
 
-    # 3) Yahoo 補值
+    # Yahoo 補值
     for ysym in yahoo_symbol_candidates(stock_id, market_type):
         try:
             tk = yf.Ticker(ysym)
@@ -398,7 +397,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # ==============================================================
-# 估值與 AI 分數
+# 估值 / 分數 / 買賣點 / 圖表
 # ============================================================== 
 
 def dividend_valuation(dividend: Optional[float], req_yield_pct: float) -> Optional[float]:
@@ -426,7 +425,6 @@ def value_score(dy: float, pe: float, pb: float, roe: float) -> float:
             score += 6
         elif dy < 1:
             score -= 6
-
     if not pd.isna(pe):
         if pe <= 10:
             score += 12
@@ -434,7 +432,6 @@ def value_score(dy: float, pe: float, pb: float, roe: float) -> float:
             score += 6
         elif pe >= 30:
             score -= 12
-
     if not pd.isna(pb):
         if pb <= 1.2:
             score += 10
@@ -442,7 +439,6 @@ def value_score(dy: float, pe: float, pb: float, roe: float) -> float:
             score += 4
         elif pb >= 5:
             score -= 10
-
     if not pd.isna(roe):
         if roe >= 15:
             score += 10
@@ -450,7 +446,6 @@ def value_score(dy: float, pe: float, pb: float, roe: float) -> float:
             score += 5
         elif roe < 5:
             score -= 5
-
     return max(0, min(100, score))
 
 
@@ -496,7 +491,6 @@ def ai_score(df: pd.DataFrame, dy: float, pe: float, pb: float, roe: float) -> f
     ts = technical_score(df)
     vs = value_score(dy, pe, pb, roe)
     last = df.iloc[-1]
-
     ms = 50.0
     if safe_float(last.get("RET_5D"), 0) > 0:
         ms += 10
@@ -504,53 +498,34 @@ def ai_score(df: pd.DataFrame, dy: float, pe: float, pb: float, roe: float) -> f
         ms += 10
     if safe_float(last.get("VOL_RATIO"), 1) >= 1.2:
         ms += 10
-
     score = 0.45 * ts + 0.35 * vs + 0.20 * ms
     return round(max(0, min(100, score)), 2)
 
-# ==============================================================
-# 買賣點
-# ============================================================== 
 
 def trade_point(df: pd.DataFrame) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
     if df.empty:
         return None, None, None, None
-
     last = df.iloc[-1]
     price = safe_float(last["Close"], np.nan)
     if pd.isna(price):
         return None, None, None, None
-
     buy_candidates = [x for x in [safe_float(last.get("BBL")), safe_float(last.get("SMA20")), safe_float(last.get("SMA50"))] if not pd.isna(x)]
     sell_candidates = [x for x in [safe_float(last.get("BBH")), safe_float(df["Close"].rolling(60).max().iloc[-1])] if not pd.isna(x)]
-
     buy = min(buy_candidates) if buy_candidates else None
     sell = max(sell_candidates) if sell_candidates else None
     atr = safe_float(last.get("ATR"), np.nan)
     stop = price - atr * 2 if not pd.isna(atr) else None
-
     rr = None
     if stop is not None and sell is not None and stop < price:
         risk = max(price - stop, 0.0001)
         reward = max(sell - price, 0)
         rr = reward / risk
-
     return buy, sell, stop, rr
 
-# ==============================================================
-# 圖表
-# ============================================================== 
 
 def chart(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
-    fig.add_trace(go.Candlestick(
-        x=df.index,
-        open=df["Open"],
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        name="股價",
-    ))
+    fig.add_trace(go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="股價"))
     fig.add_trace(go.Scatter(x=df.index, y=df["SMA20"], name="SMA20"))
     fig.add_trace(go.Scatter(x=df.index, y=df["SMA50"], name="SMA50"))
     fig.add_trace(go.Scatter(x=df.index, y=df["SMA200"], name="SMA200"))
@@ -588,15 +563,14 @@ def rsi_chart(df: pd.DataFrame) -> go.Figure:
     return fig
 
 # ==============================================================
-# 側欄 / 主畫面
+# 主畫面
 # ============================================================== 
 
-st.title("📈 AI 股票量化分析系統 V11.2 PRO")
+st.title("📈 AI 股票量化分析系統 V12 PRO")
 st.caption("FinMind + Yahoo Finance ｜ 技術分析 + 價值分析 + AI決策引擎")
 
 with st.sidebar:
     st.header("⚙️ 系統設定")
-
     finmind_token = ""
     try:
         finmind_token = st.secrets.get("FINMIND_TOKEN", "")
@@ -606,9 +580,8 @@ with st.sidebar:
     finmind_token = st.text_input("FinMind Token（可留空）", value=finmind_token, type="password")
     req_yield = st.slider("合理殖利率假設（%）", min_value=2.0, max_value=10.0, value=5.0, step=0.5)
     top_n = st.slider("掃描顯示前 N 名", 5, 50, DEFAULT_TOP_N)
-
     st.markdown("---")
-    st.caption("Top 10 會掃描 FinMind 全台股清單；若清單抓不到才退回預設備援名單。")
+    st.caption("Top10 會掃描 FinMind 全台股清單；若清單抓不到，才退回預設備援名單。")
 
 mode = st.radio("系統模式", ["📊 單一股票分析", "🔎 Top10機會掃描"], horizontal=True)
 
@@ -622,8 +595,6 @@ if mode == "📊 單一股票分析":
     if st.button("開始分析"):
         try:
             stock_id = normalize_symbol(symbol)
-
-            # 先自動判斷市場別
             market_type = None
             try:
                 info_df = get_tw_stock_info(finmind_token if finmind_token else None)
@@ -643,16 +614,13 @@ if mode == "📊 單一股票分析":
                 else:
                     fund = load_fundamental(stock_id, market_type, finmind_token if finmind_token else None)
                     price = float(df.iloc[-1]["Close"])
-
                     dy = fund["yield"]
                     if pd.isna(dy) and not pd.isna(fund["dividend"]) and price > 0:
                         dy = fund["dividend"] / price * 100
-
                     pe = fund["pe"]
                     pb = fund["pb"]
                     eps = fund["eps"]
                     roe = fund["roe"]
-
                     fair_div = dividend_valuation(fund["dividend"], req_yield)
                     fair_eps = eps_valuation(eps, 15)
                     score = ai_score(df, dy, pe, pb, roe)
@@ -685,33 +653,29 @@ if mode == "📊 單一股票分析":
                     b3.metric("停損", format_num(stop, 2))
                     b4.metric("R/R", format_num(rr, 2))
 
-                    st.caption(f"價值分析來源：{fund['source_note'] if fund['source_note'] else '無'}｜股價來源：{source}")
-
-                    if pd.isna(dy) and pd.isna(pe) and pd.isna(pb) and pd.isna(eps) and pd.isna(roe):
-                        st.warning("此股票目前無法抓到可用價值分析欄位，請稍後再試或測試其他股票。")
-
                     st.markdown("## 趨勢圖與技術分析")
                     st.plotly_chart(chart(df.tail(220)), use_container_width=True)
-
                     left_col, right_col = st.columns(2)
                     with left_col:
                         st.plotly_chart(macd_chart(df.tail(220)), use_container_width=True)
                     with right_col:
                         st.plotly_chart(kd_chart(df.tail(220)), use_container_width=True)
-
                     st.plotly_chart(rsi_chart(df.tail(220)), use_container_width=True)
+
+                    st.caption(f"價值分析來源：{fund['source_note'] if fund['source_note'] else '無'}｜股價來源：{source}")
+                    if pd.isna(dy) and pd.isna(pe) and pd.isna(pb) and pd.isna(eps) and pd.isna(roe):
+                        st.warning("此股票目前無法抓到可用價值分析欄位，請稍後再試或測試其他股票。")
 
         except Exception as e:
             st.error(f"執行失敗：{e}")
             st.code(traceback.format_exc())
 
 # ==============================================================
-# Top10 掃描（掃描全台股清單）
+# Top10 掃描（全台股）
 # ============================================================== 
 
 elif mode == "🔎 Top10機會掃描":
     st.markdown("## Top10 機會掃描（全台股）")
-
     market_filter = st.selectbox("掃描範圍", ["全部", "上市", "上櫃"], index=0)
     start_scan = st.button("開始掃描全台股")
 
@@ -729,13 +693,12 @@ elif mode == "🔎 Top10機會掃描":
                 rows = []
                 progress = st.progress(0.0)
                 status = st.empty()
-
                 total = len(universe)
+
                 for i, row in universe.iterrows():
                     stock_id = row["stock_id"]
                     stock_name = row.get("stock_name", "")
                     market_type = row.get("type", None)
-
                     status.caption(f"掃描中：{i+1}/{total} {stock_id} {stock_name}")
                     progress.progress((i + 1) / max(total, 1))
 
@@ -743,37 +706,30 @@ elif mode == "🔎 Top10機會掃描":
                         df_raw, _ = load_price(stock_id, market_type, finmind_token if finmind_token else None)
                         if df_raw.empty:
                             continue
-
                         df = add_indicators(df_raw)
                         if df.empty:
                             continue
-
                         fund = load_fundamental(stock_id, market_type, finmind_token if finmind_token else None)
                         price = float(df.iloc[-1]["Close"])
-
                         dy = fund["yield"]
                         if pd.isna(dy) and not pd.isna(fund["dividend"]) and price > 0:
                             dy = fund["dividend"] / price * 100
-
                         pe = fund["pe"]
                         pb = fund["pb"]
                         roe = fund["roe"]
-
                         score = ai_score(df, dy, pe, pb, roe)
 
-                        rows.append(
-                            {
-                                "股票": stock_id,
-                                "名稱": stock_name,
-                                "市場": "上市" if market_type == "twse" else "上櫃",
-                                "股價": round(price, 2),
-                                "AI分數": score,
-                                "殖利率": round(dy, 2) if not pd.isna(dy) else None,
-                                "本益比": round(pe, 2) if not pd.isna(pe) else None,
-                                "股價淨值比": round(pb, 2) if not pd.isna(pb) else None,
-                                "ROE": round(roe, 2) if not pd.isna(roe) else None,
-                            }
-                        )
+                        rows.append({
+                            "股票": stock_id,
+                            "名稱": stock_name,
+                            "市場": "上市" if market_type == "twse" else "上櫃",
+                            "股價": round(price, 2),
+                            "AI分數": score,
+                            "殖利率": round(dy, 2) if not pd.isna(dy) else None,
+                            "本益比": round(pe, 2) if not pd.isna(pe) else None,
+                            "股價淨值比": round(pb, 2) if not pd.isna(pb) else None,
+                            "ROE": round(roe, 2) if not pd.isna(roe) else None,
+                        })
                     except Exception:
                         continue
 
@@ -792,4 +748,4 @@ elif mode == "🔎 Top10機會掃描":
 
 # ==============================================================
 # END
-# ============================================================== 
+# ==============================================================
