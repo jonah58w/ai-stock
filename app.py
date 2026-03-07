@@ -899,7 +899,71 @@ def make_rsi_chart(df: pd.DataFrame, title: str) -> go.Figure:
 # =========================================================
 # 單檔分析主流程
 # =========================================================
-def analyze_single_stock(stock_id: str, token: Optional[str], required_yield_pct: float, value_master: pd.DataFrame) -> Dict[str, object]:
+def fetch_finmind_single_value(stock_id: str, token: Optional[str] = None) -> Dict[str, object]:
+    """
+    針對單一股票即時補抓價值資料，避免 bulk table 缺值。
+    """
+    out = {
+        "殖利率%": np.nan,
+        "本益比": np.nan,
+        "股價淨值比": np.nan,
+        "現金股利": np.nan,
+    }
+
+    try:
+        per_df = finmind_get(
+            "TaiwanStockPER",
+            token=token,
+            data_id=normalize_symbol(stock_id),
+            start_date=(date.today() - timedelta(days=60)).strftime("%Y-%m-%d"),
+        )
+        if not per_df.empty:
+            if "date" in per_df.columns:
+                per_df["date"] = pd.to_datetime(per_df["date"], errors="coerce")
+                per_df = per_df.sort_values("date")
+            last_per = per_df.iloc[-1]
+            if "dividend_yield" in per_df.columns:
+                out["殖利率%"] = safe_float(last_per.get("dividend_yield"), np.nan)
+            if "PER" in per_df.columns:
+                out["本益比"] = safe_float(last_per.get("PER"), np.nan)
+            if "PBR" in per_df.columns:
+                out["股價淨值比"] = safe_float(last_per.get("PBR"), np.nan)
+    except Exception:
+        pass
+
+    try:
+        div_df = finmind_get(
+            "TaiwanStockDividend",
+            token=token,
+            data_id=normalize_symbol(stock_id),
+            start_date=(date.today() - timedelta(days=1100)).strftime("%Y-%m-%d"),
+        )
+        if not div_df.empty:
+            if "date" in div_df.columns:
+                div_df["date"] = pd.to_datetime(div_df["date"], errors="coerce")
+                div_df = div_df.sort_values("date")
+            if "CashEarningsDistribution" not in div_df.columns:
+                div_df["CashEarningsDistribution"] = 0
+            if "CashStatutorySurplus" not in div_df.columns:
+                div_df["CashStatutorySurplus"] = 0
+            div_df["現金股利"] = (
+                pd.to_numeric(div_df["CashEarningsDistribution"], errors="coerce").fillna(0)
+                + pd.to_numeric(div_df["CashStatutorySurplus"], errors="coerce").fillna(0)
+            )
+            last_div = div_df.iloc[-1]
+            out["現金股利"] = safe_float(last_div.get("現金股利"), np.nan)
+    except Exception:
+        pass
+
+    return out
+
+
+def analyze_single_stock(
+    stock_id: str,
+    token: Optional[str],
+    required_yield_pct: float,
+    value_master: pd.DataFrame,
+) -> Dict[str, object]:
     stock_id = normalize_symbol(stock_id)
 
     meta = value_master[value_master["stock_id"] == stock_id].copy()
@@ -919,9 +983,19 @@ def analyze_single_stock(stock_id: str, token: Optional[str], required_yield_pct
     pbr = meta["股價淨值比"].iloc[0] if ("股價淨值比" in meta.columns and not meta.empty) else np.nan
     cash_dividend = meta["現金股利"].iloc[0] if ("現金股利" in meta.columns and not meta.empty) else np.nan
 
-    # Yahoo fallback 補值
-    yfund = get_yahoo_fundamentals(stock_id, market_type)
+    # 先用 FinMind 單檔補值
+    fin_single = fetch_finmind_single_value(stock_id, token=token)
+    if pd.isna(dy):
+        dy = fin_single["殖利率%"]
+    if pd.isna(per):
+        per = fin_single["本益比"]
+    if pd.isna(pbr):
+        pbr = fin_single["股價淨值比"]
+    if pd.isna(cash_dividend):
+        cash_dividend = fin_single["現金股利"]
 
+    # Yahoo fallback 再補一次
+    yfund = get_yahoo_fundamentals(stock_id, market_type)
     if pd.isna(per):
         per = yfund["trailing_pe"] if pd.notna(yfund["trailing_pe"]) else yfund["forward_pe"]
     if pd.isna(pbr):
@@ -1005,7 +1079,18 @@ def scan_all_tw_stocks(
             pbr = row.get("股價淨值比", np.nan)
             cash_dividend = row.get("現金股利", np.nan)
 
-            # 掃描先補算殖利率
+            # 用 FinMind 單檔資料再補一次，避免 bulk table 缺值
+            fin_single = fetch_finmind_single_value(stock_id, token=token)
+            if pd.isna(dy):
+                dy = fin_single["殖利率%"]
+            if pd.isna(per):
+                per = fin_single["本益比"]
+            if pd.isna(pbr):
+                pbr = fin_single["股價淨值比"]
+            if pd.isna(cash_dividend):
+                cash_dividend = fin_single["現金股利"]
+
+            # 最後再用現金股利 / 股價回推殖利率
             if pd.isna(dy) and pd.notna(cash_dividend) and price > 0:
                 dy = cash_dividend / price * 100
 
