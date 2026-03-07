@@ -5,3 +5,6 @@ requests
 yfinance
 plotly
 ta
+scikit-learn
+lxml
+html5lib
