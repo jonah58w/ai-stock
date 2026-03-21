@@ -1,0 +1,25 @@
+{
+  "updated_at": "2026-03-21 12:38:53",
+  "weights": {
+    "macd_gc": 28,
+    "first_red": 18,
+    "ma5_ma10_gc": 18,
+    "above_ma60": 12,
+    "ma60_up": 10,
+    "vol_expand": 12,
+    "boll_breakout": 10,
+    "price_above_ma20": 5,
+    "close_above_recent_high": 12
+  },
+  "thresholds": {
+    "vol_ratio_min": 1.2,
+    "success_return_5d": 3.0,
+    "a_score_min": 72,
+    "b_score_min": 42
+  },
+  "rule_stats": {
+    "total_labeled": 0,
+    "success_rate_5d": 0.0,
+    "by_condition": {}
+  }
+}
