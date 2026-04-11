@@ -417,25 +417,19 @@ def decide_grade(
 
 def fetch_price_history(symbol: str, period: str = "12mo") -> tuple[pd.DataFrame | None, str]:
     try:
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(
+        df = yf.download(
+            symbol,
             period=period,
             interval="1d",
-            auto_adjust=False,
+            auto_adjust=True,    # True 避免 MultiIndex 問題
+            progress=False,
+            threads=False,
         )
         if df is None or df.empty:
             return None, "no_data"
-
-        # history() 回傳的欄位名稱不同，需標準化
-        df = df.rename(columns={
-            "Open":     "Open",
-            "High":     "High",
-            "Low":      "Low",
-            "Close":    "Close",
-            "Volume":   "Volume",
-            "Dividends": "Dividends",
-            "Stock Splits": "Stock Splits",
-        })
+        # 處理 MultiIndex（yfinance 新版有時會產生）
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [c[0] for c in df.columns]
         needed = ["Open", "High", "Low", "Close", "Volume"]
         for c in needed:
             if c not in df.columns:
@@ -639,14 +633,18 @@ def load_history_df() -> pd.DataFrame:
 
 def fetch_forward_df(symbol: str) -> pd.DataFrame | None:
     try:
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(
+        df = yf.download(
+            symbol,
             period="18mo",
             interval="1d",
-            auto_adjust=False,
+            auto_adjust=True,
+            progress=False,
+            threads=False,
         )
         if df is None or df.empty:
             return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [c[0] for c in df.columns]
         if "Close" not in df.columns:
             return None
         out = df[["Close"]].copy().dropna().reset_index()
