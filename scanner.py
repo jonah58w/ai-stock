@@ -112,6 +112,8 @@ def is_excluded_security(code: str, item) -> bool:
         return True
     if not code.isdigit() or len(code) != 4:
         return True
+    if code.startswith("00"):   # 排除 ETF（0050、0056 等）
+        return True
     banned_keywords = ["ETN", "權證", "牛熊", "指數", "展牛", "展熊"]
     if any(k in name     for k in banned_keywords):
         return True
@@ -415,24 +417,31 @@ def decide_grade(
 
 def fetch_price_history(symbol: str, period: str = "12mo") -> tuple[pd.DataFrame | None, str]:
     try:
-        df = yf.download(
-            symbol,
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(
             period=period,
             interval="1d",
             auto_adjust=False,
-            progress=False,
-            threads=False,
         )
         if df is None or df.empty:
             return None, "no_data"
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [c[0] for c in df.columns]
+
+        # history() 回傳的欄位名稱不同，需標準化
+        df = df.rename(columns={
+            "Open":     "Open",
+            "High":     "High",
+            "Low":      "Low",
+            "Close":    "Close",
+            "Volume":   "Volume",
+            "Dividends": "Dividends",
+            "Stock Splits": "Stock Splits",
+        })
         needed = ["Open", "High", "Low", "Close", "Volume"]
         for c in needed:
             if c not in df.columns:
                 return None, "missing_columns"
         df = df[needed].dropna().copy()
-        if len(df) < 100:
+        if len(df) < 80:
             return None, "too_short"
         return df, ""
     except Exception as e:
@@ -630,18 +639,14 @@ def load_history_df() -> pd.DataFrame:
 
 def fetch_forward_df(symbol: str) -> pd.DataFrame | None:
     try:
-        df = yf.download(
-            symbol,
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(
             period="18mo",
             interval="1d",
             auto_adjust=False,
-            progress=False,
-            threads=False,
         )
         if df is None or df.empty:
             return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [c[0] for c in df.columns]
         if "Close" not in df.columns:
             return None
         out = df[["Close"]].copy().dropna().reset_index()
