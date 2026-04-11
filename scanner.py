@@ -429,7 +429,7 @@ def _get_session():
         _YF_SESSION = curl_requests.Session(impersonate="chrome110")
     return _YF_SESSION
 
-def fetch_price_history(symbol: str, period: str = "12mo", market: str = "上市") -> tuple[pd.DataFrame | None, str]:
+def fetch_price_history(symbol: str, period: str = "12mo") -> tuple[pd.DataFrame | None, str]:
     try:
         session = _get_session()
         ticker  = yf.Ticker(symbol, session=session)
@@ -452,7 +452,7 @@ def fetch_price_history(symbol: str, period: str = "12mo", market: str = "上市
     except Exception as e:
         return None, str(e)
 
-def fetch_forward_df(symbol: str, market: str = "上市") -> pd.DataFrame | None:
+def fetch_forward_df(symbol: str) -> pd.DataFrame | None:
     try:
         session = _get_session()
         ticker  = yf.Ticker(symbol, session=session)
@@ -550,7 +550,7 @@ def analyze_one(stock: dict, learning: dict) -> tuple[dict | None, str]:
     market = stock["market"]
     symbol = tw_ticker(code, market)
 
-    raw, err = fetch_price_history(symbol, period="12mo", market=market)
+    raw, err = fetch_price_history(symbol, period="12mo")
     if raw is None or raw.empty:
         return None, err or "fetch_failed"
 
@@ -692,8 +692,7 @@ def backfill_history_returns(history_df: pd.DataFrame, learning: dict) -> pd.Dat
     unique_symbols = history_df["symbol"].dropna().astype(str).unique().tolist()
     price_cache = {}
     for symbol in unique_symbols:
-        mkt = "上市" if symbol.endswith(".TW") else "上櫃"
-        price_cache[symbol] = fetch_forward_df(symbol, market=mkt)
+        price_cache[symbol] = fetch_forward_df(symbol)
 
     for idx, row in history_df.iterrows():
         try:
