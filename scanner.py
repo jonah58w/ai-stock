@@ -12,12 +12,6 @@ import pandas as pd
 import yfinance as yf
 import twstock
 
-try:
-    import anthropic as _anthropic
-    _ANTHROPIC_AVAILABLE = True
-except ImportError:
-    _ANTHROPIC_AVAILABLE = False
-
 DATA_DIR = "data"
 LATEST_JSON = os.path.join(DATA_DIR, "latest_scan.json")
 HISTORY_CSV = os.path.join(DATA_DIR, "scan_history.csv")
@@ -547,18 +541,18 @@ def build_text_notes(grade: str, prices: dict) -> tuple[str, str, str]:
     return buy_note, stop_note, target_note
 
 # =========================================================
-# Claude AI 個股分析
+# Gemini AI 個股分析（免費版）
 # =========================================================
 
 def generate_ai_analysis(row: dict) -> str:
-    """呼叫 Claude API 產生個股自然語言分析，失敗時回傳空字串"""
-    if not _ANTHROPIC_AVAILABLE:
-        return ""
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    """呼叫 Gemini API 產生個股自然語言分析，失敗時回傳空字串"""
+    api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         return ""
     try:
-        client = _anthropic.Anthropic(api_key=api_key)
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash")
         grade_label = "A1 突破型" if row.get("grade") == "A1" else "A2 回踩型"
         prompt = f"""你是專業的台股技術分析師。請根據以下數據，用繁體中文撰寫一份簡潔的個股分析報告（200字以內）。
 
@@ -574,13 +568,8 @@ MACD柱：{row.get('hist',0)}，布林寬度：{row.get('bb_width',0)}
 
 請包含：①技術面簡評 ②操作建議 ③主要風險
 格式：直接輸出文字，不要標題或編號"""
-
-        message = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=400,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return message.content[0].text.strip()
+        response = model.generate_content(prompt)
+        return response.text.strip()
     except Exception:
         return ""
 
