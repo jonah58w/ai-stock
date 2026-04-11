@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import json
 import subprocess
 
@@ -73,7 +74,7 @@ def auto_refresh_block(seconds: int):
 
 def run_manual_scan():
     result = subprocess.run(
-        ["python", "scanner.py"],
+        [sys.executable, "scanner.py"],
         capture_output=True,
         text=True,
         encoding="utf-8",
