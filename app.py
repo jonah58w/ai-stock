@@ -353,32 +353,6 @@ def render_analysis(s):
     st.markdown("### 風險提醒")
     for item in s["risks"]: st.write(f"- {item}")
 
-def ai_block(curr, pack, code, name=""):
-    st.markdown("### 🤖 AI 分析（Gemini）")
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        st.warning("❌ GEMINI_API_KEY 未設定，請到 Streamlit Secrets 設定")
-        return
-    with st.spinner("AI 分析中..."):
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            prompt = f"""你是專業的台股技術分析師。請根據以下數據，用繁體中文撰寫一份簡潔的個股分析報告（200字以內）。
-
-股票：{name or code}（{code}）
-收盤價：{round(safe_float(curr["Close"]),2)}，量比：{round(safe_float(curr["VOL_RATIO"]),2)}
-MA5/10/20/60：{round(safe_float(curr["MA5"]),2)} / {round(safe_float(curr["MA10"]),2)} / {round(safe_float(curr["MA20"]),2)} / {round(safe_float(curr["MA60"]),2)}
-布林上/中/下：{round(safe_float(curr["BB_UPPER"]),2)} / {round(safe_float(curr["BB_MID"]),2)} / {round(safe_float(curr["BB_LOWER"]),2)}
-積極買點：{pack["aggressive_buy_price"]}，回踩買點：{pack["pullback_buy_price"]}
-第一賣點：{pack["sell_price_1"]}，停損：{pack["stop_loss_short"]}
-
-請包含：①技術面簡評 ②操作建議 ③主要風險
-格式：直接輸出文字，不要標題或編號"""
-            response = model.generate_content(prompt)
-            st.info(response.text.strip())
-        except Exception as e:
-            st.error(f"AI 分析失敗：{type(e).__name__}: {e}")
 
 # =========================================================
 # 顯示工具
@@ -559,7 +533,6 @@ elif page_mode == "單筆個股分析":
             c5.metric("來源",   sym)
 
             render_analysis(build_summary(sdf, pack))
-            ai_block(curr, pack, code, name)
             st.plotly_chart(make_professional_chart(sdf, pack, f"{code} {name}"),
                             use_container_width=True)
 
@@ -586,12 +559,6 @@ elif page_mode == "掃描個股圖表":
         c6.metric("RSI14",  row.get("rsi14",""))
 
         st.info(f"觸發條件：{row.get('reasons','-')}")
-
-        ai_txt = row.get("ai_analysis","")
-        if ai_txt:
-            st.markdown("### 🤖 Claude AI 分析"); st.info(ai_txt)
-        else:
-            st.caption("AI 分析：本次掃描未產生（需設定 ANTHROPIC_API_KEY 並重新掃描）")
 
         cdf = fetch_chart(row.get("symbol",""), period=st.session_state.chart_period)
         if cdf.empty:
