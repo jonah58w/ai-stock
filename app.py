@@ -200,25 +200,27 @@ def tw_symbol_from_code(code: str) -> list[str]:
 
 @st.cache_data(ttl=1800)
 def fetch_stock_chart_data(symbol: str, period: str = "9mo") -> pd.DataFrame:
-    df = yf.download(
-        symbol,
-        period=period,
-        interval="1d",
-        auto_adjust=False,
-        progress=False,
-        threads=False,
-    )
-    if df is None or df.empty:
-        return pd.DataFrame()
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [c[0] for c in df.columns]
-    needed = ["Open", "High", "Low", "Close", "Volume"]
-    for c in needed:
-        if c not in df.columns:
+    try:
+        from curl_cffi import requests as curl_requests
+        session = curl_requests.Session(impersonate="chrome110")
+        ticker = yf.Ticker(symbol, session=session)
+        df = ticker.history(
+            period=period,
+            interval="1d",
+            auto_adjust=False,
+            actions=False,
+        )
+        if df is None or df.empty:
             return pd.DataFrame()
-    df = df[needed].dropna().copy()
-    df = enrich_chart_df(df)
-    return df
+        needed = ["Open", "High", "Low", "Close", "Volume"]
+        for c in needed:
+            if c not in df.columns:
+                return pd.DataFrame()
+        df = df[needed].dropna().copy()
+        df = enrich_chart_df(df)
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 def fetch_single_stock_by_code(code: str, period: str = "9mo") -> tuple[str | None, pd.DataFrame]:
     for symbol in tw_symbol_from_code(code):
