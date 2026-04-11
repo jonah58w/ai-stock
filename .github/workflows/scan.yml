@@ -1,0 +1,45 @@
+name: 每日台股掃描
+
+on:
+  schedule:
+    # 台灣時間 13:35 = UTC 05:35（台灣 UTC+8）
+    # 週一到週五執行（0=週日, 1=週一 ... 5=週五）
+    - cron: "35 5 * * 1-5"
+  workflow_dispatch:   # 允許手動觸發
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scanner
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scanner.py
+
+      - name: Commit scan results
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/latest_scan.json data/scan_history.csv data/ai_learning.json || true
+          git diff --staged --quiet || git commit -m "自動掃描結果 $(TZ='Asia/Taipei' date '+%Y-%m-%d %H:%M')"
+          git push
