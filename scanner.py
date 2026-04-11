@@ -416,38 +416,17 @@ def decide_grade(
 # =========================================================
 
 # =========================================================
-# 抓價（yfinance + Cookie Session 修正）
+# 抓價（yfinance + curl_cffi Session）
 # =========================================================
 
-import requests as _requests
+from curl_cffi import requests as curl_requests
 
-def _make_yf_session():
-    """建立帶有 Yahoo Finance Cookie 的 Session，解決 Streamlit Cloud 被擋問題"""
-    session = _requests.Session()
-    session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection":      "keep-alive",
-    })
-    try:
-        # 先取得 Yahoo Finance Cookie（關鍵步驟）
-        session.get("https://finance.yahoo.com", timeout=8)
-    except Exception:
-        pass
-    return session
-
-_YF_SESSION = None   # 全域 session，整個掃描共用
+_YF_SESSION = None
 
 def _get_session():
     global _YF_SESSION
     if _YF_SESSION is None:
-        _YF_SESSION = _make_yf_session()
+        _YF_SESSION = curl_requests.Session(impersonate="chrome110")
     return _YF_SESSION
 
 def fetch_price_history(symbol: str, period: str = "12mo", market: str = "上市") -> tuple[pd.DataFrame | None, str]:
@@ -462,8 +441,6 @@ def fetch_price_history(symbol: str, period: str = "12mo", market: str = "上市
         )
         if df is None or df.empty:
             return None, "no_data"
-        # history() 欄位標準化
-        df = df.rename(columns={"stock splits": "Stock Splits"})
         needed = ["Open", "High", "Low", "Close", "Volume"]
         for c in needed:
             if c not in df.columns:
