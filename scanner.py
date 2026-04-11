@@ -790,8 +790,9 @@ def run_scan(max_workers: int = 12) -> dict:
     stocks   = get_tw_stock_list()
     pool_total = len(stocks)
 
-    rows      = []
-    fail_rows = []
+    rows          = []
+    fail_rows     = []
+    not_qualified = 0   # 分析成功但不符 A1/A2 條件
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = {ex.submit(analyze_one, s, learning): s for s in stocks}
@@ -801,6 +802,8 @@ def run_scan(max_workers: int = 12) -> dict:
                 item, err = future.result()
                 if item is not None:
                     rows.append(item)
+                elif err == "not_qualified":
+                    not_qualified += 1      # 正常分析完，只是沒達標
                 else:
                     fail_rows.append({
                         "code":   stock["code"],
@@ -818,14 +821,15 @@ def run_scan(max_workers: int = 12) -> dict:
                     "reason": str(e),
                 })
 
-    success_count = len(rows)
+    # 成功分析數 = 有A結果 + 分析完但未達標（兩者都是正常跑完的）
+    success_count = len(rows) + not_qualified
     failed_count  = len(fail_rows)
 
     if not rows:
         payload = {
             "updated_at": now_str(),
-            "status":     "error",
-            "message":    "沒有掃描到任何 A 級結果。",
+            "status":     "ok",   # 掃描本身成功，只是今天沒有 A 級
+            "message":    f"今日掃描完成，{success_count} 檔分析成功，目前沒有符合 A1/A2 條件的個股。",
             "summary":    summarize(pd.DataFrame(), pool_total, success_count, failed_count),
             "learning":   learning,
             "results":    [],
