@@ -712,6 +712,14 @@ elif page_mode == "掃描個股圖表":
 
         st.info(f"觸發條件：{row.get('reasons', '-')}")
 
+        # AI 分析報告
+        ai_text = row.get("ai_analysis", "")
+        if ai_text:
+            st.markdown("### 🤖 Claude AI 分析")
+            st.info(ai_text)
+        else:
+            st.caption("AI 分析：本次掃描未產生（需設定 ANTHROPIC_API_KEY）")
+
         symbol   = row.get("symbol", "")
         chart_df = fetch_stock_chart_data(symbol, period=st.session_state.chart_period)
 
