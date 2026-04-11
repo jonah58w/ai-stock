@@ -538,9 +538,6 @@ st.sidebar.number_input("最高成交量", min_value=0, step=100, key="max_volum
 st.sidebar.markdown("### 量比設定")
 st.sidebar.number_input("最低量比", min_value=0.0, step=0.1, key="min_vol_ratio")
 
-st.sidebar.markdown("### 單筆個股分析")
-st.sidebar.text_input("輸入股票代號", key="single_stock_code")
-
 if st.sidebar.button("🔄 手動重新掃描", use_container_width=True):
     with st.spinner("正在執行掃描，請稍候..."):
         code_ret, out, err = run_manual_scan()
@@ -656,10 +653,18 @@ if page_mode == "最新結果":
 
 elif page_mode == "單筆個股分析":
     st.subheader("單筆個股分析")
-    code = st.session_state.single_stock_code.strip()
+
+    col_input, col_btn = st.columns([3, 1])
+    with col_input:
+        code_input = st.text_input("輸入股票代號", placeholder="例如：2330、6761、2454",
+                                   label_visibility="collapsed")
+    with col_btn:
+        go = st.button("🔍 分析", use_container_width=True)
+
+    code = code_input.strip()
     if not code:
-        st.info("請在左側輸入股票代號，例如 2330、2317、2454。")
-    else:
+        st.info("請輸入股票代號後按「分析」按鈕。")
+    elif go or code:
         symbol, single_df = fetch_single_stock_by_code(code, st.session_state.chart_period)
         if single_df.empty or symbol is None:
             st.warning("找不到此股票資料，請確認代號。")
