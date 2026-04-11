@@ -680,10 +680,12 @@ elif page_mode == "單筆個股分析":
             # Claude AI 即時分析
             st.markdown("### 🤖 Claude AI 分析")
             ai_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            st.caption(f"DEBUG — API Key 存在：{'✅ 是' if ai_key else '❌ 否'}，長度：{len(ai_key)}")
             if ai_key:
                 with st.spinner("AI 分析中..."):
                     try:
                         import anthropic as _ant
+                        st.caption("DEBUG — anthropic 套件載入成功")
                         prompt = f"""你是專業的台股技術分析師。請根據以下數據，用繁體中文撰寫一份簡潔的個股分析報告（200字以內）。
 
 股票代號：{code}
@@ -703,9 +705,9 @@ MA5/10/20/60：{round(safe_float(curr["MA5"]),2)} / {round(safe_float(curr["MA10
                         )
                         st.info(msg.content[0].text.strip())
                     except Exception as e:
-                        st.warning(f"AI 分析失敗：{e}")
+                        st.error(f"AI 分析失敗：{type(e).__name__}: {e}")
             else:
-                st.caption("需在 Streamlit Secrets 設定 ANTHROPIC_API_KEY 才能使用 AI 分析")
+                st.warning("❌ ANTHROPIC_API_KEY 未設定，請到 Streamlit Secrets 設定")
 
             st.plotly_chart(make_candlestick_bollinger_chart(single_df, f"{code} K線 / 布林通道"),
                             use_container_width=True)
