@@ -354,14 +354,16 @@ def render_analysis(s):
     for item in s["risks"]: st.write(f"- {item}")
 
 def ai_block(curr, pack, code, name=""):
-    st.markdown("### 🤖 Claude AI 分析")
-    api_key = os.environ.get("ANTHROPIC_API_KEY","")
+    st.markdown("### 🤖 AI 分析（Gemini）")
+    api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
-        st.warning("❌ ANTHROPIC_API_KEY 未設定，請到 Streamlit Secrets 設定")
+        st.warning("❌ GEMINI_API_KEY 未設定，請到 Streamlit Secrets 設定")
         return
     with st.spinner("AI 分析中..."):
         try:
-            import anthropic as _ant
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
             prompt = f"""你是專業的台股技術分析師。請根據以下數據，用繁體中文撰寫一份簡潔的個股分析報告（200字以內）。
 
 股票：{name or code}（{code}）
@@ -373,10 +375,8 @@ MA5/10/20/60：{round(safe_float(curr["MA5"]),2)} / {round(safe_float(curr["MA10
 
 請包含：①技術面簡評 ②操作建議 ③主要風險
 格式：直接輸出文字，不要標題或編號"""
-            client = _ant.Anthropic(api_key=api_key)
-            msg = client.messages.create(model="claude-sonnet-4-5", max_tokens=400,
-                messages=[{"role":"user","content":prompt}])
-            st.info(msg.content[0].text.strip())
+            response = model.generate_content(prompt)
+            st.info(response.text.strip())
         except Exception as e:
             st.error(f"AI 分析失敗：{type(e).__name__}: {e}")
 
