@@ -552,7 +552,7 @@ def generate_ai_analysis(row: dict) -> str:
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
         grade_label = "A1 突破型" if row.get("grade") == "A1" else "A2 回踩型"
         prompt = f"""你是專業的台股技術分析師。請根據以下數據，用繁體中文撰寫一份簡潔的個股分析報告（200字以內）。
 
