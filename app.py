@@ -661,12 +661,12 @@ elif page_mode == "單筆個股分析":
         code_input = st.text_input("輸入股票代號", placeholder="例如：2330、6761、2454",
                                    label_visibility="collapsed")
     with col_btn:
-        go = st.button("🔍 分析", use_container_width=True)
+        do_analyze = st.button("🔍 分析", use_container_width=True)
 
     code = code_input.strip()
     if not code:
         st.info("請輸入股票代號後按「分析」按鈕。")
-    elif go or code:
+    elif do_analyze or code:
         symbol, single_df = fetch_single_stock_by_code(code, st.session_state.chart_period)
         if single_df.empty or symbol is None:
             st.warning("找不到此股票資料，請確認代號。")
