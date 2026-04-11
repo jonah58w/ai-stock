@@ -230,68 +230,239 @@ def fetch_single_stock_by_code(code: str, period: str = "9mo") -> tuple[str | No
     return None, pd.DataFrame()
 
 # =========================================================
-# 圖表
+# 圖表（專業股市分析軟體風格）
 # =========================================================
+
+_DARK_BG    = "#131722"
+_PANEL_BG   = "#1e222d"
+_GRID_COLOR = "#2a2e39"
+_TEXT_COLOR = "#d1d4dc"
+_UP_COLOR   = "#ef5350"   # 漲 紅（台灣慣例）
+_DOWN_COLOR = "#26a69a"   # 跌 綠（台灣慣例）
+
+def _base_layout(title: str, height: int) -> dict:
+    return dict(
+        title=dict(text=title, font=dict(color=_TEXT_COLOR, size=14), x=0.01),
+        paper_bgcolor=_DARK_BG,
+        plot_bgcolor=_PANEL_BG,
+        font=dict(color=_TEXT_COLOR, size=11),
+        height=height,
+        margin=dict(l=60, r=20, t=40, b=30),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+            orientation="h",
+            x=0, y=1.02,
+        ),
+        xaxis=dict(
+            showgrid=True, gridcolor=_GRID_COLOR, gridwidth=0.5,
+            showline=True, linecolor=_GRID_COLOR,
+            tickfont=dict(size=10),
+            rangeslider=dict(visible=False),
+            type="category",
+            tickangle=-30,
+        ),
+        yaxis=dict(
+            showgrid=True, gridcolor=_GRID_COLOR, gridwidth=0.5,
+            showline=True, linecolor=_GRID_COLOR,
+            tickfont=dict(size=10),
+            side="right",
+        ),
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor=_PANEL_BG, font_size=11),
+    )
+
+def _x_dates(chart_df):
+    """把日期 index 轉成字串列表，過濾掉週末空缺"""
+    return [d.strftime("%m/%d") for d in chart_df.index]
 
 def make_candlestick_bollinger_chart(df: pd.DataFrame, title: str):
     chart_df = df.tail(120).copy()
+    xs = _x_dates(chart_df)
+
+    # 漲跌顏色
+    colors_up   = [_UP_COLOR   if c >= o else _DOWN_COLOR
+                   for c, o in zip(chart_df["Close"], chart_df["Open"])]
+
     fig = go.Figure()
+
+    # ── 布林通道填充區域 ─────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=xs + xs[::-1],
+        y=list(chart_df["BB_UPPER"]) + list(chart_df["BB_LOWER"][::-1]),
+        fill="toself",
+        fillcolor="rgba(41,98,255,0.07)",
+        line=dict(color="rgba(0,0,0,0)"),
+        showlegend=False, hoverinfo="skip", name="布林區間",
+    ))
+
+    # ── 布林三軌 ─────────────────────────────────────
+    for col, name, color, dash, width in [
+        ("BB_UPPER", "布林上軌", "#2962ff", "dot",  1),
+        ("BB_MID",   "布林中軌", "#ff9800", "dash", 1),
+        ("BB_LOWER", "布林下軌", "#2962ff", "dot",  1),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=xs, y=chart_df[col], mode="lines", name=name,
+            line=dict(color=color, width=width, dash=dash),
+            hovertemplate=f"{name}: %{{y:.2f}}<extra></extra>",
+        ))
+
+    # ── 均線 ─────────────────────────────────────────
+    for col, name, color in [
+        ("MA5",  "MA5",  "#f06292"),
+        ("MA10", "MA10", "#e040fb"),
+        ("MA20", "MA20", "#00bcd4"),
+        ("MA60", "MA60", "#ff9800"),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=xs, y=chart_df[col], mode="lines", name=name,
+            line=dict(color=color, width=1.2),
+            hovertemplate=f"{name}: %{{y:.2f}}<extra></extra>",
+        ))
+
+    # ── K線主體 ──────────────────────────────────────
     fig.add_trace(go.Candlestick(
-        x=chart_df.index,
+        x=xs,
         open=chart_df["Open"], high=chart_df["High"],
         low=chart_df["Low"],   close=chart_df["Close"],
         name="K線",
+        increasing=dict(line=dict(color=_UP_COLOR,   width=1), fillcolor=_UP_COLOR),
+        decreasing=dict(line=dict(color=_DOWN_COLOR, width=1), fillcolor=_DOWN_COLOR),
+        hovertext=[
+            f"開:{o:.2f} 高:{h:.2f} 低:{l:.2f} 收:{c:.2f}"
+            for o, h, l, c in zip(
+                chart_df["Open"], chart_df["High"],
+                chart_df["Low"],  chart_df["Close"]
+            )
+        ],
     ))
-    for col, name in [("MA5","MA5"),("MA10","MA10"),("MA20","MA20"),("MA60","MA60"),
-                      ("BB_UPPER","布林上軌"),("BB_MID","布林中軌"),("BB_LOWER","布林下軌")]:
-        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df[col], mode="lines", name=name))
-    fig.update_layout(title=title, xaxis_title="日期", yaxis_title="價格",
-                      height=620, xaxis_rangeslider_visible=False)
+
+    layout = _base_layout(title, 520)
+    layout["xaxis"]["tickvals"] = xs[::5]
+    layout["xaxis"]["ticktext"] = xs[::5]
+    fig.update_layout(**layout)
     return fig
 
-def make_kline_trend_chart(df: pd.DataFrame, price_pack: dict, title: str):
+
+def make_main_chart(df: pd.DataFrame, price_pack: dict, title: str):
+    """K線 + 均線 + 買賣停損水平線 合併圖"""
     chart_df = df.tail(120).copy()
+    xs = _x_dates(chart_df)
+
     fig = go.Figure()
-    for col, name in [("Close","收盤"),("MA10","MA10"),("MA20","MA20"),("MA60","MA60")]:
-        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df[col], mode="lines", name=name))
+
+    # K線
+    fig.add_trace(go.Candlestick(
+        x=xs,
+        open=chart_df["Open"], high=chart_df["High"],
+        low=chart_df["Low"],   close=chart_df["Close"],
+        name="K線",
+        increasing=dict(line=dict(color=_UP_COLOR,   width=1), fillcolor=_UP_COLOR),
+        decreasing=dict(line=dict(color=_DOWN_COLOR, width=1), fillcolor=_DOWN_COLOR),
+    ))
+
+    # 均線
+    for col, name, color in [
+        ("MA10", "MA10", "#e040fb"),
+        ("MA20", "MA20", "#00bcd4"),
+        ("MA60", "MA60", "#ff9800"),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=xs, y=chart_df[col], mode="lines", name=name,
+            line=dict(color=color, width=1.2),
+        ))
+
+    # 水平線（買賣停損）
     hlines = [
-        (price_pack.get("support_1"),             "支撐1",     "dot"),
-        (price_pack.get("support_2"),             "支撐2",     "dot"),
-        (price_pack.get("support_3"),             "支撐3",     "dot"),
-        (price_pack.get("resistance_1"),          "壓力1",     "dash"),
-        (price_pack.get("resistance_2"),          "壓力2",     "dash"),
-        (price_pack.get("aggressive_buy_price"),  "積極買點",  "solid"),
-        (price_pack.get("pullback_buy_price"),    "回踩買點",  "solid"),
-        (price_pack.get("conservative_buy_price"),"保守買點",  "solid"),
-        (price_pack.get("sell_price_1"),          "第一賣點",  "dash"),
-        (price_pack.get("sell_price_2"),          "第二賣點",  "dash"),
-        (price_pack.get("stop_loss_short"),       "短線停損",  "dot"),
-        (price_pack.get("stop_loss_wave"),        "波段停損",  "dot"),
+        (price_pack.get("aggressive_buy_price"),  "積極買點", "#26a69a", "solid"),
+        (price_pack.get("pullback_buy_price"),    "回踩買點", "#80cbc4", "dash"),
+        (price_pack.get("sell_price_1"),          "第一賣點", "#ef5350", "dot"),
+        (price_pack.get("stop_loss_short"),       "短線停損", "#ff9800", "dot"),
+        (price_pack.get("stop_loss_wave"),        "波段停損", "#ffa726", "dash"),
     ]
-    for y, name, dash in hlines:
+    for y, name, color, dash in hlines:
         if y and safe_float(y) > 0:
-            fig.add_hline(y=safe_float(y), line_dash=dash,
-                          annotation_text=name, annotation_position="right")
-    fig.update_layout(title=title, xaxis_title="日期", yaxis_title="價格", height=500)
+            fig.add_hline(
+                y=safe_float(y),
+                line=dict(color=color, width=1, dash=dash),
+                annotation=dict(
+                    text=f"{name} {safe_float(y):.2f}",
+                    font=dict(size=10, color=color),
+                    bgcolor="rgba(0,0,0,0.5)",
+                    bordercolor=color,
+                    borderwidth=0.5,
+                    x=1.01, xanchor="left",
+                ),
+                annotation_position="right",
+            )
+
+    layout = _base_layout(title, 420)
+    layout["xaxis"]["tickvals"] = xs[::5]
+    layout["xaxis"]["ticktext"] = xs[::5]
+    fig.update_layout(**layout)
     return fig
+
 
 def make_volume_chart(df: pd.DataFrame, title: str):
     chart_df = df.tail(120).copy()
+    xs = _x_dates(chart_df)
+    colors = [_UP_COLOR if c >= o else _DOWN_COLOR
+              for c, o in zip(chart_df["Close"], chart_df["Open"])]
+
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=chart_df.index, y=chart_df["Volume"], name="成交量"))
-    fig.update_layout(title=title, xaxis_title="日期", yaxis_title="成交量", height=240)
+    fig.add_trace(go.Bar(
+        x=xs, y=chart_df["Volume"],
+        name="成交量",
+        marker_color=colors,
+        marker_line_width=0,
+        hovertemplate="成交量: %{y:,.0f}<extra></extra>",
+    ))
+
+    layout = _base_layout(title, 160)
+    layout["xaxis"]["tickvals"] = xs[::5]
+    layout["xaxis"]["ticktext"] = xs[::5]
+    layout["showlegend"] = False
+    layout["margin"]["t"] = 24
+    fig.update_layout(**layout)
     return fig
+
 
 def make_macd_chart(df: pd.DataFrame, title: str):
     chart_df = df.tail(120).copy()
-    colors = ["red" if v >= 0 else "green" for v in chart_df["MACD_HIST"]]
+    xs = _x_dates(chart_df)
+    hist_colors = [_UP_COLOR if v >= 0 else _DOWN_COLOR
+                   for v in chart_df["MACD_HIST"]]
+
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=chart_df.index, y=chart_df["MACD_HIST"],
-                         name="MACD柱", marker_color=colors))
-    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["DIF"], mode="lines", name="DIF"))
-    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["DEA"], mode="lines", name="DEA"))
-    fig.update_layout(title=title, xaxis_title="日期", yaxis_title="MACD", height=320)
+    fig.add_trace(go.Bar(
+        x=xs, y=chart_df["MACD_HIST"],
+        name="柱狀", marker_color=hist_colors, marker_line_width=0,
+        hovertemplate="HIST: %{y:.4f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=xs, y=chart_df["DIF"], mode="lines", name="DIF",
+        line=dict(color="#f06292", width=1.2),
+        hovertemplate="DIF: %{y:.4f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=xs, y=chart_df["DEA"], mode="lines", name="DEA",
+        line=dict(color="#ffeb3b", width=1.2),
+        hovertemplate="DEA: %{y:.4f}<extra></extra>",
+    ))
+
+    layout = _base_layout(title, 180)
+    layout["xaxis"]["tickvals"] = xs[::5]
+    layout["xaxis"]["ticktext"] = xs[::5]
+    layout["margin"]["t"] = 24
+    fig.update_layout(**layout)
     return fig
+
+
+def make_kline_trend_chart(df: pd.DataFrame, price_pack: dict, title: str):
+    """相容舊呼叫，直接轉給新函式"""
+    return make_main_chart(df, price_pack, title)
+
 
 # =========================================================
 # 操作建議（單筆 / 掃描圖表共用）
