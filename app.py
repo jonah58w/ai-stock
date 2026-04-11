@@ -259,7 +259,7 @@ def make_professional_chart(df, price_pack, title):
     tt   = [dts[i] for i in tv]
     ax   = dict(showgrid=True, gridcolor=_GRID, gridwidth=0.5,
                 zeroline=False, showline=True, linecolor=_GRID,
-                tickfont=dict(size=10, color=_TXT), rangeslider=dict(visible=False))
+                tickfont=dict(size=10, color=_TXT))
 
     fig.update_layout(
         title=dict(text=title, font=dict(color=_TXT, size=14), x=0.01),
