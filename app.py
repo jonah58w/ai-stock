@@ -550,12 +550,15 @@ left, right = st.columns([3, 1])
 with left:
     st.caption(f"最後掃描時間：{latest.get('updated_at', 'N/A')}")
     status = latest.get("status", "empty")
-    if status == "ok":
+    msg    = latest.get("message", "")
+    if status == "ok" and (latest.get("summary", {}).get("A1_count", 0) + latest.get("summary", {}).get("A2_count", 0)) > 0:
         st.success("已載入最新掃描結果")
+    elif status == "ok":
+        st.info(msg if msg else "掃描完成，今日無符合 A1/A2 條件的個股。")
     elif status == "empty":
-        st.warning(latest.get("message", "尚無資料"))
+        st.warning(msg if msg else "尚無資料")
     else:
-        st.error(latest.get("message", "讀取失敗"))
+        st.error(msg if msg else "讀取失敗")
 with right:
     st.caption(f"資料檔：{LATEST_JSON}")
 
