@@ -128,6 +128,13 @@ def enrich_chart_df(df):
     df["VOL_RATIO"] = df["Volume"] / df["VOL_MA5"].replace(0, pd.NA)
     df["RECENT_HIGH_20"] = df["High"].rolling(20).max()
     df["RECENT_LOW_20"]  = df["Low"].rolling(20).min()
+    # KD 指標（KDJ，週期9）
+    low9  = df["Low"].rolling(9).min()
+    high9 = df["High"].rolling(9).max()
+    rsv   = (df["Close"] - low9) / (high9 - low9).replace(0, pd.NA) * 100
+    df["K"] = rsv.ewm(com=2, adjust=False).mean()   # K = EMA(RSV, 1/3)
+    df["D"] = df["K"].ewm(com=2, adjust=False).mean()  # D = EMA(K, 1/3)
+    df["J"] = 3 * df["K"] - 2 * df["D"]
     return df
 
 def tw_symbols(code):
@@ -174,17 +181,19 @@ def make_professional_chart(df, price_pack, title):
     dts = [d.strftime("%m/%d") for d in chart_df.index]
     ud  = [_UP if c >= o else _DN for c, o in zip(chart_df["Close"], chart_df["Open"])]
 
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                        row_heights=[0.60, 0.22, 0.18], vertical_spacing=0.018)
+    # 四面板：K線60% / 成交量15% / KD13% / MACD12%
+    fig = make_subplots(rows=4, cols=1, shared_xaxes=True,
+                        row_heights=[0.58, 0.14, 0.14, 0.14],
+                        vertical_spacing=0.015)
 
-    # 布林填充
+    # ── 布林填充 ─────────────────────────────────────
     fig.add_trace(go.Scatter(
         x=xs+xs[::-1], y=list(chart_df["BB_UPPER"])+list(chart_df["BB_LOWER"][::-1]),
         fill="toself", fillcolor="rgba(41,98,255,0.07)",
         line=dict(color="rgba(0,0,0,0)"), showlegend=False, hoverinfo="skip",
     ), row=1, col=1)
 
-    # 布林三軌
+    # ── 布林三軌 ─────────────────────────────────────
     for col, lbl, color, dash in [
         ("BB_UPPER","布林上","#5c7cfa","dot"),
         ("BB_MID",  "布林中","#ff9800","dash"),
@@ -195,7 +204,7 @@ def make_professional_chart(df, price_pack, title):
             hovertemplate=f"{lbl}: %{{y:.2f}}<extra></extra>",
         ), row=1, col=1)
 
-    # 均線
+    # ── 均線 ─────────────────────────────────────────
     for col, lbl, color in [
         ("MA5","MA5","#f48fb1"), ("MA10","MA10","#ce93d8"),
         ("MA20","MA20","#4dd0e1"), ("MA60","MA60","#ffb74d"),
@@ -205,18 +214,19 @@ def make_professional_chart(df, price_pack, title):
             hovertemplate=f"{lbl}: %{{y:.2f}}<extra></extra>",
         ), row=1, col=1)
 
-    # K線
+    # ── K線 ──────────────────────────────────────────
     fig.add_trace(go.Candlestick(
         x=xs, open=chart_df["Open"], high=chart_df["High"],
         low=chart_df["Low"], close=chart_df["Close"], name="K線",
         increasing=dict(line=dict(color=_UP, width=1.5), fillcolor=_UP),
         decreasing=dict(line=dict(color=_DN, width=1.5), fillcolor=_DN),
         hovertext=[f"開:{o:.2f}  高:{h:.2f}  低:{l:.2f}  收:{c:.2f}"
-                   for o,h,l,c in zip(chart_df["Open"],chart_df["High"],chart_df["Low"],chart_df["Close"])],
+                   for o,h,l,c in zip(chart_df["Open"],chart_df["High"],
+                                      chart_df["Low"],chart_df["Close"])],
         hoverlabel=dict(bgcolor=_PAN),
     ), row=1, col=1)
 
-    # 買賣停損線
+    # ── 買賣停損線 ───────────────────────────────────
     for y_val, lbl, color, dash in [
         (price_pack.get("aggressive_buy_price"), "積極買", _UP,      "solid"),
         (price_pack.get("pullback_buy_price"),   "回踩買", "#ff8a65","dash"),
@@ -231,29 +241,64 @@ def make_professional_chart(df, price_pack, title):
                     borderpad=2, x=1.0, xanchor="right"),
                 annotation_position="right")
 
-    # 成交量
-    fig.add_trace(go.Bar(x=xs, y=chart_df["Volume"], marker_color=ud, marker_line_width=0,
-        name="成交量", showlegend=False, hovertemplate="量: %{y:,.0f}<extra></extra>",
+    # ── 成交量 ───────────────────────────────────────
+    fig.add_trace(go.Bar(x=xs, y=chart_df["Volume"], marker_color=ud,
+        marker_line_width=0, showlegend=False,
+        hovertemplate="量: %{y:,.0f}<extra></extra>",
     ), row=2, col=1)
     fig.add_trace(go.Scatter(x=xs, y=chart_df["Volume"].rolling(5).mean(), mode="lines",
-        line=dict(color="#ffeb3b", width=1), name="量MA5", showlegend=False,
+        line=dict(color="#ffeb3b", width=1), showlegend=False,
         hovertemplate="量MA5: %{y:,.0f}<extra></extra>",
     ), row=2, col=1)
 
-    # MACD
-    mc = [_UP if v >= 0 else _DN for v in chart_df["MACD_HIST"]]
-    fig.add_trace(go.Bar(x=xs, y=chart_df["MACD_HIST"], marker_color=mc, marker_line_width=0,
-        showlegend=False, hovertemplate="HIST: %{y:.4f}<extra></extra>",
+    # ── KD 指標 ──────────────────────────────────────
+    fig.add_trace(go.Scatter(x=xs, y=chart_df["K"], mode="lines", name="K",
+        line=dict(color="#f48fb1", width=1.5),
+        hovertemplate="K: %{y:.2f}<extra></extra>",
+        showlegend=False,
     ), row=3, col=1)
+    fig.add_trace(go.Scatter(x=xs, y=chart_df["D"], mode="lines", name="D",
+        line=dict(color="#4dd0e1", width=1.5),
+        hovertemplate="D: %{y:.2f}<extra></extra>",
+        showlegend=False,
+    ), row=3, col=1)
+    fig.add_trace(go.Scatter(x=xs, y=chart_df["J"], mode="lines", name="J",
+        line=dict(color="#ffb74d", width=1, dash="dot"),
+        hovertemplate="J: %{y:.2f}<extra></extra>",
+        showlegend=False,
+    ), row=3, col=1)
+    # 超買超賣區間
+    for y_ref, color in [(80, "rgba(239,83,80,0.15)"), (20, "rgba(38,166,154,0.15)")]:
+        fig.add_hline(y=y_ref, row=3, col=1,
+            line=dict(color="#555", width=0.6, dash="dot"))
+    # KD 金叉死叉標示
+    k_vals = chart_df["K"].values
+    d_vals = chart_df["D"].values
+    for i in range(1, len(k_vals)):
+        if pd.isna(k_vals[i]) or pd.isna(d_vals[i]): continue
+        if k_vals[i-1] <= d_vals[i-1] and k_vals[i] > d_vals[i]:   # 金叉
+            fig.add_annotation(x=xs[i], y=d_vals[i], text="金", showarrow=False,
+                font=dict(size=9, color=_UP), row=3, col=1)
+        elif k_vals[i-1] >= d_vals[i-1] and k_vals[i] < d_vals[i]: # 死叉
+            fig.add_annotation(x=xs[i], y=d_vals[i], text="死", showarrow=False,
+                font=dict(size=9, color=_DN), row=3, col=1)
+
+    # ── MACD ─────────────────────────────────────────
+    mc = [_UP if v >= 0 else _DN for v in chart_df["MACD_HIST"]]
+    fig.add_trace(go.Bar(x=xs, y=chart_df["MACD_HIST"], marker_color=mc,
+        marker_line_width=0, showlegend=False,
+        hovertemplate="HIST: %{y:.4f}<extra></extra>",
+    ), row=4, col=1)
     fig.add_trace(go.Scatter(x=xs, y=chart_df["DIF"], mode="lines",
         line=dict(color="#f48fb1", width=1.3), showlegend=False,
         hovertemplate="DIF: %{y:.4f}<extra></extra>",
-    ), row=3, col=1)
+    ), row=4, col=1)
     fig.add_trace(go.Scatter(x=xs, y=chart_df["DEA"], mode="lines",
         line=dict(color="#ffeb3b", width=1.3), showlegend=False,
         hovertemplate="DEA: %{y:.4f}<extra></extra>",
-    ), row=3, col=1)
+    ), row=4, col=1)
 
+    # ── Layout ───────────────────────────────────────
     step = max(1, n//12)
     tv   = xs[::step]
     tt   = [dts[i] for i in tv]
@@ -264,19 +309,33 @@ def make_professional_chart(df, price_pack, title):
     fig.update_layout(
         title=dict(text=title, font=dict(color=_TXT, size=14), x=0.01),
         paper_bgcolor=_BG, plot_bgcolor=_PAN,
-        font=dict(color=_TXT, size=11), height=720,
+        font=dict(color=_TXT, size=11), height=800,
         margin=dict(l=10, r=100, t=40, b=30),
         legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10), orientation="h", x=0, y=1.04),
         hovermode="x unified", hoverlabel=dict(bgcolor=_PAN, font_size=11, bordercolor=_GRID),
         xaxis =dict(**ax, tickvals=tv, ticktext=tt, tickangle=-30),
         xaxis2=dict(**ax, tickvals=tv, ticktext=tt, showticklabels=False),
-        xaxis3=dict(**ax, tickvals=tv, ticktext=tt, tickangle=-30),
+        xaxis3=dict(**ax, tickvals=tv, ticktext=tt, showticklabels=False),
+        xaxis4=dict(**ax, tickvals=tv, ticktext=tt, tickangle=-30),
         yaxis =dict(**ax, side="right"),
         yaxis2=dict(**ax, side="right"),
-        yaxis3=dict(**ax, side="right"),
+        yaxis3=dict(**ax, side="right", range=[-10, 110]),
+        yaxis4=dict(**ax, side="right"),
     )
-    fig.update_xaxes(showspikes=True, spikecolor=_TXT, spikesnap="cursor", spikemode="across", spikethickness=0.5)
+    fig.update_xaxes(showspikes=True, spikecolor=_TXT, spikesnap="cursor",
+                     spikemode="across", spikethickness=0.5)
     fig.update_yaxes(showspikes=True, spikecolor=_TXT, spikethickness=0.5)
+
+    # 各面板右側標籤
+    fig.add_annotation(x=1.01, y=0.85, xref="paper", yref="paper",
+        text="K線+布林", showarrow=False, font=dict(size=9, color=_TXT), xanchor="left")
+    fig.add_annotation(x=1.01, y=0.36, xref="paper", yref="paper",
+        text="成交量", showarrow=False, font=dict(size=9, color=_TXT), xanchor="left")
+    fig.add_annotation(x=1.01, y=0.22, xref="paper", yref="paper",
+        text="KD(9)", showarrow=False, font=dict(size=9, color=_TXT), xanchor="left")
+    fig.add_annotation(x=1.01, y=0.08, xref="paper", yref="paper",
+        text="MACD", showarrow=False, font=dict(size=9, color=_TXT), xanchor="left")
+
     return fig
 
 # =========================================================
