@@ -687,15 +687,18 @@ elif page_mode == "單筆個股分析":
             # Claude AI 即時分析
             st.markdown("### 🤖 Claude AI 分析")
             ai_key = os.environ.get("ANTHROPIC_API_KEY", "")
-            st.caption(f"DEBUG — API Key 存在：{'✅ 是' if ai_key else '❌ 否'}，長度：{len(ai_key)}")
             if ai_key:
                 with st.spinner("AI 分析中..."):
                     try:
                         import anthropic as _ant
-                        st.caption("DEBUG — anthropic 套件載入成功")
+                        # 查股票名稱
+                        import twstock as _tw
+                        stock_name = _tw.codes.get(code, None)
+                        name_str = getattr(stock_name, "name", code) if stock_name else code
+
                         prompt = f"""你是專業的台股技術分析師。請根據以下數據，用繁體中文撰寫一份簡潔的個股分析報告（200字以內）。
 
-股票代號：{code}
+股票：{name_str}（{code}）
 收盤價：{round(safe_float(curr["Close"]),2)}，量比：{round(safe_float(curr["VOL_RATIO"]),2)}
 MA5/10/20/60：{round(safe_float(curr["MA5"]),2)} / {round(safe_float(curr["MA10"]),2)} / {round(safe_float(curr["MA20"]),2)} / {round(safe_float(curr["MA60"]),2)}
 布林上/中/下：{round(safe_float(curr["BB_UPPER"]),2)} / {round(safe_float(curr["BB_MID"]),2)} / {round(safe_float(curr["BB_LOWER"]),2)}
