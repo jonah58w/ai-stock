@@ -415,30 +415,125 @@ def decide_grade(
 # 抓價
 # =========================================================
 
-def fetch_price_history(symbol: str, period: str = "12mo") -> tuple[pd.DataFrame | None, str]:
+# =========================================================
+# 台灣官方資料抓取（TWSE / TPEX，不依賴 yfinance）
+# =========================================================
+
+import requests
+import time as _time
+
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+}
+
+def _fetch_twse_month(code: str, year: int, month: int) -> pd.DataFrame:
+    date_str = f"{year}{month:02d}01"
+    url = (
+        f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY"
+        f"?date={date_str}&stockNo={code}&response=json"
+    )
     try:
-        df = yf.download(
-            symbol,
-            period=period,
-            interval="1d",
-            auto_adjust=False,
-            progress=False,
-            threads=False,
-        )
-        if df is None or df.empty:
-            return None, "no_data"
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [c[0] for c in df.columns]
-        needed = ["Open", "High", "Low", "Close", "Volume"]
-        for c in needed:
-            if c not in df.columns:
-                return None, "missing_columns"
-        df = df[needed].dropna().copy()
-        if len(df) < 80:
-            return None, "too_short"
-        return df, ""
-    except Exception as e:
-        return None, str(e)
+        r = requests.get(url, headers=_HEADERS, timeout=12)
+        j = r.json()
+        if j.get("stat") != "OK" or not j.get("data"):
+            return pd.DataFrame()
+        cols = ["日期","成交股數","成交金額","開盤價","最高價","最低價","收盤價","漲跌價差","成交筆數"]
+        df = pd.DataFrame(j["data"], columns=cols)
+        def parse_tw(s):
+            p = s.strip().split("/")
+            return f"{int(p[0])+1911}-{p[1]}-{p[2]}"
+        df["Date"]   = df["日期"].apply(parse_tw)
+        df["Open"]   = pd.to_numeric(df["開盤價"].str.replace(",",""), errors="coerce")
+        df["High"]   = pd.to_numeric(df["最高價"].str.replace(",",""), errors="coerce")
+        df["Low"]    = pd.to_numeric(df["最低價"].str.replace(",",""), errors="coerce")
+        df["Close"]  = pd.to_numeric(df["收盤價"].str.replace(",",""), errors="coerce")
+        df["Volume"] = pd.to_numeric(df["成交股數"].str.replace(",",""), errors="coerce")
+        df = df[["Date","Open","High","Low","Close","Volume"]].dropna()
+        df["Date"] = pd.to_datetime(df["Date"])
+        return df.set_index("Date")
+    except Exception:
+        return pd.DataFrame()
+
+def _fetch_tpex_month(code: str, year: int, month: int) -> pd.DataFrame:
+    tw_year  = year - 1911
+    date_str = f"{tw_year}/{month:02d}"
+    url = (
+        f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+        f"?l=zh-tw&d={date_str}&stkno={code}&s=0,asc"
+    )
+    try:
+        r = requests.get(url, headers=_HEADERS, timeout=12)
+        j = r.json()
+        rows = j.get("aaData", [])
+        if not rows:
+            return pd.DataFrame()
+        records = []
+        for row in rows:
+            try:
+                p = row[0].strip().split("/")
+                dt = pd.to_datetime(f"{int(p[0])+1911}-{p[1]}-{p[2]}")
+                records.append({
+                    "Date":   dt,
+                    "Open":   float(str(row[4]).replace(",","")),
+                    "High":   float(str(row[5]).replace(",","")),
+                    "Low":    float(str(row[6]).replace(",","")),
+                    "Close":  float(str(row[7]).replace(",","")),
+                    "Volume": float(str(row[1]).replace(",","")),
+                })
+            except Exception:
+                continue
+        if not records:
+            return pd.DataFrame()
+        return pd.DataFrame(records).set_index("Date")
+    except Exception:
+        return pd.DataFrame()
+
+def fetch_price_history(symbol: str, period: str = "12mo", market: str = "上市") -> tuple[pd.DataFrame | None, str]:
+    code    = symbol.replace(".TW","").replace(".TWO","").strip()
+    is_tpex = symbol.endswith(".TWO") or market == "上櫃"
+    months_map = {"3mo":3,"6mo":6,"9mo":9,"12mo":12,"18mo":18}
+    n_months   = months_map.get(period, 12)
+
+    now    = datetime.now()
+    frames = []
+    for i in range(n_months):
+        m = now.month - i
+        y = now.year
+        while m <= 0:
+            m += 12
+            y -= 1
+        df_m = _fetch_tpex_month(code, y, m) if is_tpex else _fetch_twse_month(code, y, m)
+        if not df_m.empty:
+            frames.append(df_m)
+        _time.sleep(0.05)
+
+    if not frames:
+        return None, "no_data"
+
+    df = pd.concat(frames).sort_index()
+    df = df[~df.index.duplicated(keep="last")]
+    needed = ["Open","High","Low","Close","Volume"]
+    for c in needed:
+        if c not in df.columns:
+            return None, "missing_columns"
+    df = df[needed].dropna().copy()
+    if len(df) < 80:
+        return None, "too_short"
+    return df, ""
+
+def fetch_forward_df(symbol: str, market: str = "上市") -> pd.DataFrame | None:
+    df, _ = fetch_price_history(symbol, period="18mo", market=market)
+    if df is None or df.empty:
+        return None
+    out = df[["Close"]].copy().dropna().reset_index()
+    out.columns = ["Date", "Close"]
+    out["Date"] = pd.to_datetime(out["Date"]).dt.date
+    return out
 
 # =========================================================
 # 買賣點價位分析
@@ -517,7 +612,7 @@ def analyze_one(stock: dict, learning: dict) -> tuple[dict | None, str]:
     market = stock["market"]
     symbol = tw_ticker(code, market)
 
-    raw, err = fetch_price_history(symbol, period="12mo")
+    raw, err = fetch_price_history(symbol, period="12mo", market=market)
     if raw is None or raw.empty:
         return None, err or "fetch_failed"
 
@@ -657,7 +752,10 @@ def backfill_history_returns(history_df: pd.DataFrame, learning: dict) -> pd.Dat
         return history_df
     success_threshold = safe_float(learning["thresholds"].get("success_return_5d", 3.0), 3.0)
     unique_symbols = history_df["symbol"].dropna().astype(str).unique().tolist()
-    price_cache = {symbol: fetch_forward_df(symbol) for symbol in unique_symbols}
+    price_cache = {}
+    for symbol in unique_symbols:
+        mkt = "上市" if symbol.endswith(".TW") else "上櫃"
+        price_cache[symbol] = fetch_forward_df(symbol, market=mkt)
 
     for idx, row in history_df.iterrows():
         try:
