@@ -421,13 +421,12 @@ def fetch_price_history(symbol: str, period: str = "12mo") -> tuple[pd.DataFrame
             symbol,
             period=period,
             interval="1d",
-            auto_adjust=True,    # True 避免 MultiIndex 問題
+            auto_adjust=False,
             progress=False,
             threads=False,
         )
         if df is None or df.empty:
             return None, "no_data"
-        # 處理 MultiIndex（yfinance 新版有時會產生）
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = [c[0] for c in df.columns]
         needed = ["Open", "High", "Low", "Close", "Volume"]
@@ -637,7 +636,7 @@ def fetch_forward_df(symbol: str) -> pd.DataFrame | None:
             symbol,
             period="18mo",
             interval="1d",
-            auto_adjust=True,
+            auto_adjust=False,
             progress=False,
             threads=False,
         )
