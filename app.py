@@ -676,6 +676,37 @@ elif page_mode == "單筆個股分析":
             c5.metric("代號來源", symbol)
 
             render_analysis(summary_pack)
+
+            # Claude AI 即時分析
+            st.markdown("### 🤖 Claude AI 分析")
+            ai_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if ai_key:
+                with st.spinner("AI 分析中..."):
+                    try:
+                        import anthropic as _ant
+                        prompt = f"""你是專業的台股技術分析師。請根據以下數據，用繁體中文撰寫一份簡潔的個股分析報告（200字以內）。
+
+股票代號：{code}
+收盤價：{round(safe_float(curr["Close"]),2)}，量比：{round(safe_float(curr["VOL_RATIO"]),2)}
+MA5/10/20/60：{round(safe_float(curr["MA5"]),2)} / {round(safe_float(curr["MA10"]),2)} / {round(safe_float(curr["MA20"]),2)} / {round(safe_float(curr["MA60"]),2)}
+布林上/中/下：{round(safe_float(curr["BB_UPPER"]),2)} / {round(safe_float(curr["BB_MID"]),2)} / {round(safe_float(curr["BB_LOWER"]),2)}
+積極買點：{pack["aggressive_buy_price"]}，回踩買點：{pack["pullback_buy_price"]}
+第一賣點：{pack["sell_price_1"]}，停損：{pack["stop_loss_short"]}
+
+請包含：①技術面簡評 ②操作建議 ③主要風險
+格式：直接輸出文字，不要標題或編號"""
+                        client = _ant.Anthropic(api_key=ai_key)
+                        msg = client.messages.create(
+                            model="claude-sonnet-4-5",
+                            max_tokens=400,
+                            messages=[{"role": "user", "content": prompt}],
+                        )
+                        st.info(msg.content[0].text.strip())
+                    except Exception as e:
+                        st.warning(f"AI 分析失敗：{e}")
+            else:
+                st.caption("需在 Streamlit Secrets 設定 ANTHROPIC_API_KEY 才能使用 AI 分析")
+
             st.plotly_chart(make_candlestick_bollinger_chart(single_df, f"{code} K線 / 布林通道"),
                             use_container_width=True)
             st.plotly_chart(make_kline_trend_chart(single_df, pack, f"{code} 支撐壓力與買賣點"),
