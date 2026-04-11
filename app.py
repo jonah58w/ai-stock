@@ -143,6 +143,25 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+# ── 驗證選單類型的 session state 值是否合法，否則重設 ──
+valid_refresh   = [30, 60, 120, 300]
+valid_top_n     = [20, 50, 100]
+valid_period    = ["3mo", "6mo", "9mo", "12mo"]
+valid_grades    = ["A1", "A2"]
+valid_pages     = ["最新結果", "單筆個股分析", "掃描個股圖表", "AI學習", "歷史紀錄"]
+
+if st.session_state.get("refresh_sec") not in valid_refresh:
+    st.session_state["refresh_sec"] = 60
+if st.session_state.get("top_n") not in valid_top_n:
+    st.session_state["top_n"] = 50
+if st.session_state.get("chart_period") not in valid_period:
+    st.session_state["chart_period"] = "9mo"
+if not isinstance(st.session_state.get("grade_filter"), list) or \
+   not all(g in valid_grades for g in st.session_state.get("grade_filter", [])):
+    st.session_state["grade_filter"] = ["A1", "A2"]
+if st.session_state.get("page_mode") not in valid_pages:
+    st.session_state["page_mode"] = "最新結果"
+
 # =========================================================
 # 技術指標
 # =========================================================
