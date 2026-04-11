@@ -230,8 +230,218 @@ def fetch_single_stock_by_code(code: str, period: str = "9mo") -> tuple[str | No
     return None, pd.DataFrame()
 
 # =========================================================
-# 圖表（專業股市分析軟體風格）
+# 圖表（TradingView 風格三面板整合圖）
 # =========================================================
+
+_DARK_BG    = "#131722"
+_PANEL_BG   = "#1e222d"
+_GRID_COLOR = "#2a2e39"
+_TEXT_COLOR = "#d1d4dc"
+_UP_COLOR   = "#ef5350"   # 漲 紅（台灣慣例）
+_DOWN_COLOR = "#26a69a"   # 跌 綠（台灣慣例）
+
+def _candle_colors(chart_df):
+    return [_UP_COLOR if c >= o else _DOWN_COLOR
+            for c, o in zip(chart_df["Close"], chart_df["Open"])]
+
+def make_professional_chart(df: pd.DataFrame, price_pack: dict, title: str):
+    """
+    TradingView 風格三面板整合圖：
+    - 上面板（60%）：K線 + 布林通道 + 均線 + 買賣停損水平線
+    - 中面板（22%）：成交量（漲跌對應顏色）
+    - 下面板（18%）：MACD
+    """
+    from plotly.subplots import make_subplots
+
+    chart_df = df.tail(120).copy()
+    n = len(chart_df)
+    xs = list(range(n))
+    dates = [d.strftime("%m/%d") for d in chart_df.index]
+
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        row_heights=[0.60, 0.22, 0.18],
+        vertical_spacing=0.02,
+    )
+
+    # ── 面板1：布林通道填充 ──────────────────────────
+    fig.add_trace(go.Scatter(
+        x=xs + xs[::-1],
+        y=list(chart_df["BB_UPPER"]) + list(chart_df["BB_LOWER"][::-1]),
+        fill="toself", fillcolor="rgba(41,98,255,0.06)",
+        line=dict(color="rgba(0,0,0,0)"),
+        showlegend=False, hoverinfo="skip",
+    ), row=1, col=1)
+
+    # 布林三軌
+    for col, color, dash, width in [
+        ("BB_UPPER", "#2962ff", "dot",  1),
+        ("BB_MID",   "#ff9800", "dash", 1),
+        ("BB_LOWER", "#2962ff", "dot",  1),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=xs, y=chart_df[col], mode="lines",
+            name=col.replace("BB_","布林").replace("UPPER","上").replace("MID","中").replace("LOWER","下"),
+            line=dict(color=color, width=width, dash=dash),
+            hovertemplate="%{y:.2f}<extra></extra>",
+        ), row=1, col=1)
+
+    # 均線
+    for col, name, color in [
+        ("MA5",  "MA5",  "#f06292"),
+        ("MA10", "MA10", "#ce93d8"),
+        ("MA20", "MA20", "#4dd0e1"),
+        ("MA60", "MA60", "#ffb74d"),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=xs, y=chart_df[col], mode="lines", name=name,
+            line=dict(color=color, width=1.3),
+            hovertemplate=f"{name}: %{{y:.2f}}<extra></extra>",
+        ), row=1, col=1)
+
+    # K線
+    fig.add_trace(go.Candlestick(
+        x=xs,
+        open=chart_df["Open"], high=chart_df["High"],
+        low=chart_df["Low"],   close=chart_df["Close"],
+        name="K線",
+        increasing=dict(line=dict(color=_UP_COLOR, width=1.2), fillcolor=_UP_COLOR),
+        decreasing=dict(line=dict(color=_DOWN_COLOR, width=1.2), fillcolor=_DOWN_COLOR),
+        hovertext=[
+            f"開:{o:.2f} 高:{h:.2f} 低:{l:.2f} 收:{c:.2f}"
+            for o, h, l, c in zip(
+                chart_df["Open"], chart_df["High"],
+                chart_df["Low"],  chart_df["Close"])
+        ],
+        hoverlabel=dict(bgcolor=_PANEL_BG),
+    ), row=1, col=1)
+
+    # 買賣停損水平線
+    hlines = [
+        (price_pack.get("aggressive_buy_price"),  "積極買", "#ef5350", "solid"),
+        (price_pack.get("pullback_buy_price"),    "回踩買", "#ff8a65", "dash"),
+        (price_pack.get("sell_price_1"),          "賣點1",  "#42a5f5", "dot"),
+        (price_pack.get("stop_loss_short"),       "停損",   "#ffca28", "dot"),
+    ]
+    for y_val, name, color, dash in hlines:
+        if y_val and safe_float(y_val) > 0:
+            fig.add_hline(
+                y=safe_float(y_val), row=1, col=1,
+                line=dict(color=color, width=0.8, dash=dash),
+                annotation=dict(
+                    text=f"<b>{name}</b> {safe_float(y_val):.1f}",
+                    font=dict(size=10, color=color),
+                    bgcolor="rgba(19,23,34,0.7)",
+                    borderpad=2,
+                    x=1.0, xanchor="right",
+                ),
+                annotation_position="right",
+            )
+
+    # ── 面板2：成交量 ────────────────────────────────
+    vol_colors = _candle_colors(chart_df)
+    fig.add_trace(go.Bar(
+        x=xs, y=chart_df["Volume"],
+        name="成交量", marker_color=vol_colors, marker_line_width=0,
+        hovertemplate="量: %{y:,.0f}<extra></extra>",
+        showlegend=False,
+    ), row=2, col=1)
+
+    # 量MA5
+    vol_ma5 = chart_df["Volume"].rolling(5).mean()
+    fig.add_trace(go.Scatter(
+        x=xs, y=vol_ma5, mode="lines", name="量MA5",
+        line=dict(color="#ffeb3b", width=1),
+        hovertemplate="量MA5: %{y:,.0f}<extra></extra>",
+        showlegend=False,
+    ), row=2, col=1)
+
+    # ── 面板3：MACD ──────────────────────────────────
+    hist_colors = [_UP_COLOR if v >= 0 else _DOWN_COLOR
+                   for v in chart_df["MACD_HIST"]]
+    fig.add_trace(go.Bar(
+        x=xs, y=chart_df["MACD_HIST"],
+        name="MACD柱", marker_color=hist_colors, marker_line_width=0,
+        hovertemplate="HIST: %{y:.4f}<extra></extra>",
+        showlegend=False,
+    ), row=3, col=1)
+    fig.add_trace(go.Scatter(
+        x=xs, y=chart_df["DIF"], mode="lines", name="DIF",
+        line=dict(color="#f06292", width=1.2),
+        hovertemplate="DIF: %{y:.4f}<extra></extra>",
+        showlegend=False,
+    ), row=3, col=1)
+    fig.add_trace(go.Scatter(
+        x=xs, y=chart_df["DEA"], mode="lines", name="DEA",
+        line=dict(color="#ffeb3b", width=1.2),
+        hovertemplate="DEA: %{y:.4f}<extra></extra>",
+        showlegend=False,
+    ), row=3, col=1)
+
+    # ── 全局 Layout ──────────────────────────────────
+    tick_step = max(1, n // 12)
+    tickvals  = xs[::tick_step]
+    ticktext  = [dates[i] for i in tickvals]
+
+    axis_common = dict(
+        showgrid=True, gridcolor=_GRID_COLOR, gridwidth=0.5,
+        showline=True, linecolor=_GRID_COLOR,
+        tickfont=dict(size=10, color=_TEXT_COLOR),
+        rangeslider=dict(visible=False),
+    )
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(color=_TEXT_COLOR, size=13), x=0.01),
+        paper_bgcolor=_DARK_BG,
+        plot_bgcolor=_PANEL_BG,
+        font=dict(color=_TEXT_COLOR, size=11),
+        height=680,
+        margin=dict(l=10, r=90, t=36, b=30),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0)", font=dict(size=10),
+            orientation="h", x=0, y=1.03,
+        ),
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor=_PANEL_BG, font_size=10),
+        xaxis=dict(**axis_common, tickvals=tickvals, ticktext=ticktext, tickangle=-30),
+        xaxis2=dict(**axis_common, tickvals=tickvals, ticktext=ticktext, showticklabels=False),
+        xaxis3=dict(**axis_common, tickvals=tickvals, ticktext=ticktext, tickangle=-30),
+        yaxis=dict(**axis_common, side="right", title=""),
+        yaxis2=dict(**axis_common, side="right", title=""),
+        yaxis3=dict(**axis_common, side="right", title=""),
+    )
+
+    # 各面板背景
+    for i in range(1, 4):
+        fig.update_layout(**{f"plot_bgcolor": _PANEL_BG})
+
+    return fig
+
+
+def make_candlestick_bollinger_chart(df: pd.DataFrame, title: str):
+    """相容舊呼叫 — 產生整合三面板圖（不含買賣點）"""
+    empty_pack = {k: 0 for k in [
+        "aggressive_buy_price", "pullback_buy_price",
+        "sell_price_1", "stop_loss_short"
+    ]}
+    return make_professional_chart(df, empty_pack, title)
+
+
+def make_kline_trend_chart(df: pd.DataFrame, price_pack: dict, title: str):
+    """相容舊呼叫 — 直接用整合圖"""
+    return make_professional_chart(df, price_pack, title)
+
+
+def make_volume_chart(df: pd.DataFrame, title: str):
+    """已整合進三面板，此函式回傳空圖（避免重複顯示）"""
+    return None
+
+
+def make_macd_chart(df: pd.DataFrame, title: str):
+    """已整合進三面板，此函式回傳空圖（避免重複顯示）"""
+    return None
+
 
 _DARK_BG    = "#131722"
 _PANEL_BG   = "#1e222d"
@@ -890,14 +1100,10 @@ MA5/10/20/60：{round(safe_float(curr["MA5"]),2)} / {round(safe_float(curr["MA10
             else:
                 st.warning("❌ ANTHROPIC_API_KEY 未設定，請到 Streamlit Secrets 設定")
 
-            st.plotly_chart(make_candlestick_bollinger_chart(single_df, f"{code} K線 / 布林通道"),
-                            use_container_width=True)
-            st.plotly_chart(make_kline_trend_chart(single_df, pack, f"{code} 支撐壓力與買賣點"),
-                            use_container_width=True)
-            st.plotly_chart(make_volume_chart(single_df, f"{code} 成交量"),
-                            use_container_width=True)
-            st.plotly_chart(make_macd_chart(single_df, f"{code} MACD"),
-                            use_container_width=True)
+            st.plotly_chart(
+                make_professional_chart(single_df, pack, f"{code} {name_str}"),
+                use_container_width=True,
+            )
 
 # =========================================================
 # 掃描個股圖表
@@ -958,15 +1164,17 @@ elif page_mode == "掃描個股圖表":
             summary_pack = build_analysis_summary(chart_df, pack)
             render_analysis(summary_pack)
 
+            # AI 分析（掃描結果已有，直接顯示）
+            ai_text = row.get("ai_analysis", "")
+            if ai_text:
+                st.markdown("### 🤖 Claude AI 分析")
+                st.info(ai_text)
+
             name = row.get("name", "")
-            st.plotly_chart(make_candlestick_bollinger_chart(chart_df, f"{row['code']} {name} K線 / 布林通道"),
-                            use_container_width=True)
-            st.plotly_chart(make_kline_trend_chart(chart_df, pack, f"{row['code']} {name} 支撐壓力與買賣點"),
-                            use_container_width=True)
-            st.plotly_chart(make_volume_chart(chart_df, f"{row['code']} {name} 成交量"),
-                            use_container_width=True)
-            st.plotly_chart(make_macd_chart(chart_df, f"{row['code']} {name} MACD"),
-                            use_container_width=True)
+            st.plotly_chart(
+                make_professional_chart(chart_df, pack, f"{row['code']} {name}"),
+                use_container_width=True,
+            )
 
 # =========================================================
 # AI 學習
