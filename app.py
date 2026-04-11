@@ -252,6 +252,13 @@ def make_professional_chart(df, price_pack, title):
     ), row=2, col=1)
 
     # ── KD 指標 ──────────────────────────────────────
+    if "K" not in chart_df.columns or chart_df["K"].isna().all():
+        low9  = chart_df["Low"].rolling(9).min()
+        high9 = chart_df["High"].rolling(9).max()
+        rsv   = (chart_df["Close"] - low9) / (high9 - low9).replace(0, pd.NA) * 100
+        chart_df["K"] = rsv.ewm(com=2, adjust=False).mean()
+        chart_df["D"] = chart_df["K"].ewm(com=2, adjust=False).mean()
+        chart_df["J"] = 3 * chart_df["K"] - 2 * chart_df["D"]
     fig.add_trace(go.Scatter(x=xs, y=chart_df["K"], mode="lines", name="K",
         line=dict(color="#f48fb1", width=1.5),
         hovertemplate="K: %{y:.2f}<extra></extra>",
