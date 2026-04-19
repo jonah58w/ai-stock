@@ -592,7 +592,7 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
             hovertemplate=f"{lbl}: %{{y:.2f}}<extra></extra>",
         ), row=1, col=1)
 
-    # K 線(移除不相容的 hovertext/hoverlabel)
+    # K 線
     fig.add_trace(go.Candlestick(
         x=xs,
         open=cdf["Open"], high=cdf["High"],
@@ -701,7 +701,7 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
 
     fig.add_hline(y=0, row=4, col=1, line=dict(color="#888", width=1))
 
-    # Layout — 關閉 K 線的 rangeslider,否則會吃掉主圖
+    # Layout
     step = max(1, n // 12)
     tv = xs[::step]
     tt = [dts[i] for i in tv]
@@ -750,7 +750,6 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
     return fig
 
 def safe_render_chart(df: pd.DataFrame, prices: Dict[str, float], title: str):
-    """包一層 try/except,圖表出錯顯示錯誤訊息而不是空白"""
     if df is None or df.empty:
         st.warning("無圖表資料可繪製")
         return
@@ -980,14 +979,14 @@ def render_fundamental(stock_id: str, market_type: Optional[str]):
         st.caption(f"資料來源:{note}")
 
 # =========================================================
-# Session state
+# Session state — 預設值:最低成交量 0
 # =========================================================
 
 defaults = {
     "enable_auto_refresh": False, "refresh_sec": 60,
     "top_n": 50, "grade_filter": ["A1", "A2"], "chart_period": "9mo",
     "min_price": 0.0, "max_price": 10000.0,
-    "min_volume": 500, "max_volume": 0, "min_vol_ratio": 1.0,
+    "min_volume": 0, "max_volume": 0, "min_vol_ratio": 1.0,
     "selected_stock_option": None,
     "page_mode": "最新結果", "pending_page_mode": None,
 }
@@ -1082,7 +1081,7 @@ def learning_panel(learning):
             ]), hide_index=True)
 
 # =========================================================
-# Sidebar
+# Sidebar — 成交量單位改回「股」
 # =========================================================
 
 st.sidebar.title("操作面板")
@@ -1100,11 +1099,11 @@ st.sidebar.number_input("最低價格", min_value=0.0, step=1.0, key="min_price"
 st.sidebar.number_input("最高價格", min_value=0.0, step=10.0, key="max_price")
 
 st.sidebar.markdown("### 成交量設定")
-st.sidebar.number_input("最低成交量(張)",
-                       min_value=0, step=100, key="min_volume",
-                       help="0 = 不限")
+st.sidebar.number_input("最低成交量(股)",
+                       min_value=0, step=10000, key="min_volume",
+                       help="單位為股,0 = 不限。參考:500 張 = 500,000 股")
 st.sidebar.number_input("最高成交量(0 = 不限)",
-                       min_value=0, step=100, key="max_volume")
+                       min_value=0, step=10000, key="max_volume")
 
 st.sidebar.markdown("### 量比設定")
 st.sidebar.number_input("最低量比",
@@ -1161,6 +1160,7 @@ m3.metric("缺資料/失敗", summ.get("failed_count", 0))
 m4.metric("A1 突破型",   summ.get("A1_count", 0))
 m5.metric("A2 回踩型",   summ.get("A2_count", 0))
 
+# ── 篩選邏輯:成交量單位改回「股」,不再乘 1000 ──
 df = rank_df(pd.DataFrame(latest.get("results", [])))
 if not df.empty and "grade" in df.columns:
     df = df[df["grade"].isin(st.session_state.grade_filter)]
@@ -1169,9 +1169,9 @@ if not df.empty:
         df = df[(df["close"] >= st.session_state.min_price) &
                 (df["close"] <= st.session_state.max_price)]
     if "volume" in df.columns:
-        df = df[df["volume"] >= st.session_state.min_volume * 1000]
+        df = df[df["volume"] >= st.session_state.min_volume]
     if st.session_state.max_volume > 0 and "volume" in df.columns:
-        df = df[df["volume"] <= st.session_state.max_volume * 1000]
+        df = df[df["volume"] <= st.session_state.max_volume]
     if "vol_ratio" in df.columns:
         df = df[df["vol_ratio"] >= st.session_state.min_vol_ratio]
 
@@ -1344,9 +1344,9 @@ elif page_mode == "歷史紀錄":
             h = h[(h["close"] >= st.session_state.min_price) &
                   (h["close"] <= st.session_state.max_price)]
         if "volume" in h.columns:
-            h = h[h["volume"] >= st.session_state.min_volume * 1000]
+            h = h[h["volume"] >= st.session_state.min_volume]
         if st.session_state.max_volume > 0 and "volume" in h.columns:
-            h = h[h["volume"] <= st.session_state.max_volume * 1000]
+            h = h[h["volume"] <= st.session_state.max_volume]
         if "vol_ratio" in h.columns:
             h = h[h["vol_ratio"] >= st.session_state.min_vol_ratio]
         hc = ["scan_date", "code", "name", "grade", "type", "close",
