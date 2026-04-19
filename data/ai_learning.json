@@ -1,6 +1,11 @@
 {
-  "updated_at": "2026-03-21 12:38:53",
+  "updated_at": "2026-04-19 02:03:42",
   "weights": {
+    "ma60_slope_up": 15,
+    "vol_ratio_2x": 10,
+    "rsi_healthy": 8,
+    "boll_expanding": 8,
+    "weekly_above_ma20": 12,
     "macd_gc": 28,
     "first_red": 18,
     "ma5_ma10_gc": 18,
@@ -13,6 +18,8 @@
   },
   "thresholds": {
     "vol_ratio_min": 1.2,
+    "pullback_pct": 0.02,
+    "bonus_score_min": 15,
     "success_return_5d": 3.0,
     "a_score_min": 72,
     "b_score_min": 42
@@ -20,6 +27,7 @@
   "rule_stats": {
     "total_labeled": 0,
     "success_rate_5d": 0.0,
-    "by_condition": {}
+    "by_condition": {},
+    "combo_stats": {}
   }
 }
