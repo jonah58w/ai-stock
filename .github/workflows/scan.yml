@@ -2,15 +2,16 @@ name: 每日台股掃描
 
 on:
   schedule:
-    # 台灣時間 13:35 = UTC 05:35（台灣 UTC+8）
-    # 週一到週五執行（0=週日, 1=週一 ... 5=週五）
-    - cron: "35 5 * * 1-5"
-  workflow_dispatch:   # 允許手動觸發
+    # 台灣時間 16:00 = UTC 08:00(收盤後 30 分,資料已穩)
+    - cron: "0 8 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -34,7 +35,15 @@ jobs:
       - name: Run scanner
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python scanner.py
+        run: python scanner.py 2>&1 | tee scanner.log
+
+      - name: Upload scanner log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-log
+          path: scanner.log
+          retention-days: 7
 
       - name: Commit scan results
         run: |
