@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import json
+import traceback
 import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -113,7 +114,6 @@ def empty_latest():
     }
 
 def get_finmind_token() -> str:
-    """從 Streamlit secrets 或環境變數讀取 FinMind token"""
     try:
         if "FINMIND_TOKEN" in st.secrets:
             return str(st.secrets["FINMIND_TOKEN"]).strip()
@@ -175,7 +175,6 @@ def _yahoo_fetch_once(symbol: str, period: str) -> pd.DataFrame:
     return df[needed].dropna().copy()
 
 def _yahoo_fetch_with_retry(symbol: str, period: str, max_retries: int = 2) -> pd.DataFrame:
-    """失敗自動重試(較短退避時間,避免使用者等太久)"""
     import time, random
     for attempt in range(max_retries):
         try:
@@ -269,7 +268,6 @@ def get_market_regime() -> Dict[str, Any]:
 # =========================================================
 
 def _pick_col(df: pd.DataFrame, *names):
-    """從多個可能欄名擇一(大小寫容錯)"""
     for n in names:
         if n in df.columns:
             return df[n]
@@ -529,7 +527,7 @@ def _stop_loss_targets(df: pd.DataFrame, row_data: Dict[str, Any],
     }
 
 # =========================================================
-# 圖表 — 欄位大小寫容錯
+# 圖表
 # =========================================================
 
 _BG   = "#131722"
@@ -553,7 +551,7 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
         vertical_spacing=0.025,
     )
 
-    # 布林(容錯 5 種命名)
+    # 布林通道
     bb_u = _pick_col(cdf, "BB_Upper", "BB_UPPER", "BBH")
     bb_m = _pick_col(cdf, "BB_Mid",   "BB_MID",   "BB_MIDDLE")
     bb_l = _pick_col(cdf, "BB_Lower", "BB_LOWER", "BBL")
@@ -594,7 +592,7 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
             hovertemplate=f"{lbl}: %{{y:.2f}}<extra></extra>",
         ), row=1, col=1)
 
-    # K 線
+    # K 線(移除不相容的 hovertext/hoverlabel)
     fig.add_trace(go.Candlestick(
         x=xs,
         open=cdf["Open"], high=cdf["High"],
@@ -602,11 +600,11 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
         name="K線",
         increasing=dict(line=dict(color=_UP, width=1), fillcolor=_UP),
         decreasing=dict(line=dict(color=_DN, width=1), fillcolor=_DN),
-        hovertext=[
+        text=[
             f"開:{o:.2f} 高:{h:.2f} 低:{l:.2f} 收:{c:.2f}"
             for o, h, l, c in zip(cdf["Open"], cdf["High"], cdf["Low"], cdf["Close"])
         ],
-        hoverlabel=dict(bgcolor=_PAN),
+        hoverinfo="text",
     ), row=1, col=1)
 
     # 買賣停損線 — 只畫最近 30 根
@@ -676,7 +674,7 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
             fig.add_hline(y=y_ref, row=3, col=1,
                           line=dict(color=col, width=0.8, dash=dash))
 
-    # MACD — 容錯 3 種命名
+    # MACD
     hist_col = next((c for c in ["MACD_Hist", "MACD_HIST", "MACD_hist"] if c in cdf.columns), None)
     macd_col = next((c for c in ["MACD", "DIF"] if c in cdf.columns), None)
     sig_col  = next((c for c in ["MACD_Signal", "MACD_signal", "DEA"] if c in cdf.columns), None)
@@ -703,7 +701,7 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
 
     fig.add_hline(y=0, row=4, col=1, line=dict(color="#888", width=1))
 
-    # Layout
+    # Layout — 關閉 K 線的 rangeslider,否則會吃掉主圖
     step = max(1, n // 12)
     tv = xs[::step]
     tt = [dts[i] for i in tv]
@@ -726,7 +724,8 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
         ),
         hovermode="x unified",
         hoverlabel=dict(bgcolor=_PAN, font_size=11, bordercolor=_GRID),
-        xaxis =dict(**ax_base, tickvals=tv, ticktext=tt, tickangle=-30),
+        xaxis =dict(**ax_base, tickvals=tv, ticktext=tt, tickangle=-30,
+                    rangeslider=dict(visible=False)),
         xaxis2=dict(**ax_base, tickvals=tv, ticktext=tt, showticklabels=False),
         xaxis3=dict(**ax_base, tickvals=tv, ticktext=tt, showticklabels=False),
         xaxis4=dict(**ax_base, tickvals=tv, ticktext=tt, tickangle=-30),
@@ -750,6 +749,22 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
 
     return fig
 
+def safe_render_chart(df: pd.DataFrame, prices: Dict[str, float], title: str):
+    """包一層 try/except,圖表出錯顯示錯誤訊息而不是空白"""
+    if df is None or df.empty:
+        st.warning("無圖表資料可繪製")
+        return
+    if len(df) < 30:
+        st.warning(f"K 棒數量不足({len(df)} 根),無法繪圖")
+        return
+    try:
+        fig = make_pro_chart(df, prices, title, period_bars=120)
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"圖表繪製失敗: {e}")
+        with st.expander("技術細節"):
+            st.code(traceback.format_exc())
+
 # =========================================================
 # 技術分析渲染
 # =========================================================
@@ -760,14 +775,12 @@ def render_technical_analysis(df: pd.DataFrame, row_data: Dict[str, Any],
         st.warning("技術分析無法產生(資料不足)")
         return None
 
-    # 1. 大盤
     st.markdown("#### 📊 大盤環境")
     mc1, mc2, mc3 = st.columns([1, 1, 3])
     mc1.metric("加權狀態", market.get("regime", "未知"))
     mc2.metric("收盤", fmt_num(market.get("close"), 1))
     mc3.info(market.get("reason", "-"))
 
-    # 2. 趨勢
     st.markdown("#### 📈 趨勢診斷")
     trend = _trend_diagnosis(df)
     tc1, tc2, tc3 = st.columns([1.5, 1, 1])
@@ -776,7 +789,6 @@ def render_technical_analysis(df: pd.DataFrame, row_data: Dict[str, Any],
     tc3.metric("年內位階", fmt_pct(trend.get("year_pct")))
     st.caption(trend["detail"])
 
-    # 3. 訊號強度
     st.markdown("#### 🎯 訊號強度")
     sig = _signal_strength(row_data)
     grade_color = {"A1": "🔴", "A2": "🟡"}.get(sig["grade"], "⚪")
@@ -803,14 +815,12 @@ def render_technical_analysis(df: pd.DataFrame, row_data: Dict[str, Any],
         with st.expander("查看完整條件明細"):
             st.write(sig["reasons"])
 
-    # 4. 量價
     st.markdown("#### 💹 量價分析")
     vol = _volume_analysis(df)
     vc1, vc2 = st.columns([1, 3])
     vc1.metric("狀態", vol["status"])
     vc2.info(vol["detail"])
 
-    # 5. 進場
     st.markdown("#### 🎯 進場策略")
     entry = _entry_strategy(df, row_data, trend)
     st.caption(f"建議倉位:**{entry.get('position', '-')}**")
@@ -829,7 +839,6 @@ def render_technical_analysis(df: pd.DataFrame, row_data: Dict[str, Any],
         st.metric("買點", fmt_num(entry.get("conservative", {}).get("price"), 2))
         st.caption(entry.get("conservative", {}).get("desc", ""))
 
-    # 6. 停損停利
     st.markdown("#### 🛡️ 停損停利")
     targets = _stop_loss_targets(df, row_data, entry)
     tgc1, tgc2, tgc3, tgc4, tgc5 = st.columns(5)
@@ -841,7 +850,6 @@ def render_technical_analysis(df: pd.DataFrame, row_data: Dict[str, Any],
     st.caption(f"風報比(短停損 vs 第一目標):**{fmt_num(targets.get('rr'), 2)}** — "
                f"{'✅ 佳' if targets.get('rr', 0) >= 2 else '⚠️ 偏低' if targets.get('rr', 0) < 1.5 else '可接受'}")
 
-    # 7. 警示
     st.markdown("#### ⚠️ 風險警示")
     warnings_list = _risk_warnings(df, row_data, trend, market)
     for w in warnings_list:
@@ -865,7 +873,7 @@ def render_technical_analysis(df: pd.DataFrame, row_data: Dict[str, Any],
     }
 
 # =========================================================
-# 基本面渲染 — 三源 fallback
+# 基本面渲染
 # =========================================================
 
 def _is_empty_fund(f):
@@ -881,7 +889,6 @@ def render_fundamental(stock_id: str, market_type: Optional[str]):
     fund = None
     errors = []
 
-    # 1) FinMind + TWSE(透過 data_loader.load_fundamental)
     if token:
         try:
             fund = load_fundamental(stock_id, market_type, token)
@@ -893,7 +900,6 @@ def render_fundamental(stock_id: str, market_type: Optional[str]):
     else:
         errors.append("未設定 FINMIND_TOKEN(Streamlit Secrets)")
 
-    # 2) Yahoo .info fallback
     if _is_empty_fund(fund):
         try:
             symbols = ([f"{stock_id}.TWO", f"{stock_id}.TW"]
@@ -1266,11 +1272,7 @@ elif page_mode == "單筆個股分析":
 
             with tab3:
                 prices = render_result["prices"] if render_result else {}
-                st.plotly_chart(
-                    make_pro_chart(sdf, prices, f"{code} {name}",
-                                   period_bars=120),
-                    use_container_width=True,
-                )
+                safe_render_chart(sdf, prices, f"{code} {name}")
 
 # ── 掃描個股圖表 ──────────────────────────────────────
 
@@ -1318,13 +1320,9 @@ elif page_mode == "掃描個股圖表":
 
             with tab3:
                 prices = render_result["prices"] if render_result else {}
-                st.plotly_chart(
-                    make_pro_chart(
-                        cdf, prices,
-                        f"{row['code']} {row.get('name', '')}",
-                        period_bars=120,
-                    ),
-                    use_container_width=True,
+                safe_render_chart(
+                    cdf, prices,
+                    f"{row['code']} {row.get('name', '')}",
                 )
 
 # ── AI 學習 ────────────────────────────────────────────
