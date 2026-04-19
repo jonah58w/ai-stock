@@ -58,6 +58,21 @@ def happened_in_last_n_days(cond_series: pd.Series, n: int = 3) -> bool:
         return False
     return bool(cond_series.tail(n).fillna(False).any())
 
+def flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    處理 yfinance 新版偶爾回傳 MultiIndex 欄位的問題,
+    並移除重複欄位。確保後續 df["Close"] 等存取回傳的是 Series 而非 DataFrame。
+    """
+    if df is None or df.empty:
+        return df
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+    df = df.loc[:, ~df.columns.duplicated()]
+    for c in ["Open", "High", "Low", "Close", "Volume"]:
+        if c in df.columns and isinstance(df[c], pd.DataFrame):
+            df[c] = df[c].iloc[:, 0]
+    return df
+
 # =========================================================
 # 學習模型
 # =========================================================
@@ -169,6 +184,9 @@ def rsi(series: pd.Series, period: int = 14) -> pd.Series:
 
 def enrich_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+
+    # 防線:確保欄位是 flat、無重複、關鍵欄為 Series
+    df = flatten_columns(df)
 
     # 均線
     df["MA5"]  = df["Close"].rolling(5).mean()
@@ -455,10 +473,15 @@ def fetch_price_history(symbol: str, period: str = "12mo") -> tuple[pd.DataFrame
         )
         if df is None or df.empty:
             return None, "no_data"
+
+        # 壓平欄位結構(MultiIndex / 重複欄 / 單欄被塞成 DataFrame)
+        df = flatten_columns(df)
+
         needed = ["Open", "High", "Low", "Close", "Volume"]
         for c in needed:
             if c not in df.columns:
                 return None, "missing_columns"
+
         df = df[needed].dropna().copy()
         if len(df) < 80:
             return None, "too_short"
@@ -479,6 +502,7 @@ def fetch_forward_df(symbol: str) -> pd.DataFrame | None:
         )
         if df is None or df.empty:
             return None
+        df = flatten_columns(df)
         if "Close" not in df.columns:
             return None
         out = df[["Close"]].copy().dropna().reset_index()
@@ -505,14 +529,12 @@ def build_trade_prices(df: pd.DataFrame, grade: str) -> dict:
     recent_low  = safe_float(df.tail(20)["Low"].min())
 
     if grade == "A1":
-        # 突破型:積極買點=當前收盤(突破點),回踩買點=MA10
         aggressive_buy   = round(close, 2)
         pullback_buy     = round(ma10, 2)
         conservative_buy = round(ma20, 2)
         stop_loss_short  = round(ma10, 2)
         stop_loss_wave   = round(ma20, 2)
     else:
-        # 回踩型:積極買點=MA10,回踩買點=MA20
         aggressive_buy   = round(ma10, 2)
         pullback_buy     = round(ma20, 2)
         conservative_buy = round(ma60, 2)
@@ -524,7 +546,7 @@ def build_trade_prices(df: pd.DataFrame, grade: str) -> dict:
         "pullback_buy_price":     pullback_buy,
         "conservative_buy_price": conservative_buy,
         "sell_price_1":           round(bb_upper, 2),
-        "sell_price_2":           round(recent_high * 1.05, 2),  # 突破高點再上 5%
+        "sell_price_2":           round(recent_high * 1.05, 2),
         "stop_loss_short":        stop_loss_short,
         "stop_loss_wave":         stop_loss_wave,
         "stop_loss_hard":         round(ma60, 2),
@@ -579,7 +601,6 @@ def analyze_one(stock: dict, learning: dict) -> tuple[dict | None, str]:
 
     grade = decide_grade(a1_conds, a2_conds, bonus_score, learning["thresholds"])
 
-    # 只保留 A1 / A2
     if grade == "-":
         return None, "not_qualified"
 
@@ -587,7 +608,6 @@ def analyze_one(stock: dict, learning: dict) -> tuple[dict | None, str]:
     prices = build_trade_prices(df, grade)
     buy_note, stop_note, target_note = build_text_notes(grade, prices)
 
-    # 整合所有觸發條件說明
     all_conds = {**a1_conds, **a2_conds}
     cond_labels = {
         "a1_ma20_up":           "MA20向上",
@@ -642,7 +662,6 @@ def analyze_one(stock: dict, learning: dict) -> tuple[dict | None, str]:
         "buy_note":    buy_note,
         "stop_note":   stop_note,
         "target_note": target_note,
-        # A1 條件欄位(供學習追蹤)
         "cond_a1_ma20_up":          int(a1_conds.get("a1_ma20_up", False)),
         "cond_a1_above_ma60":       int(a1_conds.get("a1_above_ma60", False)),
         "cond_a1_macd_first_red":   int(a1_conds.get("a1_macd_first_red", False)),
@@ -650,14 +669,12 @@ def analyze_one(stock: dict, learning: dict) -> tuple[dict | None, str]:
         "cond_a1_breakout_20d":     int(a1_conds.get("a1_breakout_20d", False)),
         "cond_a1_vol_expand":       int(a1_conds.get("a1_vol_expand", False)),
         "cond_a1_red_candle":       int(a1_conds.get("a1_red_candle", False)),
-        # A2 條件欄位
         "cond_a2_ma60_up":          int(a2_conds.get("a2_ma60_up", False)),
         "cond_a2_bullish_alignment":int(a2_conds.get("a2_bullish_alignment", False)),
         "cond_a2_pullback_to_ma":   int(a2_conds.get("a2_pullback_to_ma", False)),
         "cond_a2_macd_positive":    int(a2_conds.get("a2_macd_positive", False)),
         "cond_a2_vol_shrink":       int(a2_conds.get("a2_vol_shrink", False)),
         "cond_a2_higher_lows":      int(a2_conds.get("a2_higher_lows", False)),
-        # 回測欄位
         "ret_3d":    np.nan,
         "ret_5d":    np.nan,
         "ret_10d":   np.nan,
@@ -734,10 +751,9 @@ def rebuild_learning(history_df: pd.DataFrame, old_learning: dict) -> dict:
 
     labeled["success_5d"] = labeled["success_5d"].astype(int)
 
-    # ── 加分條件勝率分析 ──────────────────────────────
     bonus_map = {
-        "cond_a1_vol_expand":        "vol_ratio_2x",
-        "cond_a1_breakout_20d":      "ma60_slope_up",
+        "cond_a1_vol_expand":   "vol_ratio_2x",
+        "cond_a1_breakout_20d": "ma60_slope_up",
     }
     by_condition = {}
     new_weights  = learning["weights"].copy()
@@ -757,11 +773,9 @@ def rebuild_learning(history_df: pd.DataFrame, old_learning: dict) -> dict:
         }
         base = DEFAULT_LEARNING["weights"].get(w_key, 10)
         if len(sub) >= 20:
-            # 比例式調整:勝率映射到 0.6~1.4 倍基礎權重
             multiplier = max(0.6, min(1.4, win_rate / 55.0))
             new_weights[w_key] = max(1, round(base * multiplier))
 
-    # ── A1 vs A2 勝率比較 ────────────────────────────
     grade_stats = {}
     for g in ["A1", "A2"]:
         sub = labeled[labeled["grade"] == g] if "grade" in labeled.columns else pd.DataFrame()
@@ -772,8 +786,6 @@ def rebuild_learning(history_df: pd.DataFrame, old_learning: dict) -> dict:
                 "avg_ret_5d":      round(sub["ret_5d"].mean(), 2) if "ret_5d" in sub.columns else 0.0,
             }
 
-    # ── 動態調整加分門檻 ─────────────────────────────
-    # 若 A1 整體勝率 < 50%,提高加分門檻(讓標準更嚴)
     a1_stats = grade_stats.get("A1", {})
     if a1_stats.get("samples", 0) >= 30:
         current_min = safe_int(learning["thresholds"].get("bonus_score_min", 15))
@@ -822,7 +834,7 @@ def run_scan(max_workers: int = 12) -> dict:
 
     rows          = []
     fail_rows     = []
-    not_qualified = 0   # 分析成功但不符 A1/A2 條件
+    not_qualified = 0
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = {ex.submit(analyze_one, s, learning): s for s in stocks}
@@ -833,7 +845,7 @@ def run_scan(max_workers: int = 12) -> dict:
                 if item is not None:
                     rows.append(item)
                 elif err == "not_qualified":
-                    not_qualified += 1      # 正常分析完,只是沒達標
+                    not_qualified += 1
                 else:
                     fail_rows.append({
                         "code":   stock["code"],
@@ -851,14 +863,13 @@ def run_scan(max_workers: int = 12) -> dict:
                     "reason": str(e),
                 })
 
-    # 成功分析數 = 有 A 結果 + 分析完但未達標(兩者都是正常跑完的)
     success_count = len(rows) + not_qualified
     failed_count  = len(fail_rows)
 
     if not rows:
         payload = {
             "updated_at": now_str(),
-            "status":     "ok",   # 掃描本身成功,只是今天沒有 A 級
+            "status":     "ok",
             "message":    f"今日掃描完成,{success_count} 檔分析成功,目前沒有符合 A1/A2 條件的個股。",
             "summary":    summarize(pd.DataFrame(), pool_total, success_count, failed_count),
             "learning":   learning,
@@ -870,7 +881,6 @@ def run_scan(max_workers: int = 12) -> dict:
 
     df = pd.DataFrame(rows)
 
-    # A1 優先,同級內按加分高低排序
     grade_rank = {"A1": 0, "A2": 1}
     df["grade_rank"] = df["grade"].map(grade_rank).fillna(9)
     df = df.sort_values(
