@@ -122,7 +122,7 @@ def get_finmind_token() -> str:
     return os.environ.get("FINMIND_TOKEN", "").strip()
 
 # =========================================================
-# Cache — 失敗不入庫
+# Cache
 # =========================================================
 
 @st.cache_data(ttl=60)
@@ -145,7 +145,7 @@ def load_history():
         return pd.DataFrame()
 
 # =========================================================
-# 價格抓取 — 帶重試 + MultiIndex 防線
+# 價格抓取 — 重試 + MultiIndex 防線
 # =========================================================
 
 def _flatten_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
@@ -159,7 +159,6 @@ def _flatten_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def _yahoo_fetch_once(symbol: str, period: str) -> pd.DataFrame:
-    """單次抓 Yahoo,含 curl_cffi session"""
     try:
         from curl_cffi import requests as cr
         session = cr.Session(impersonate="chrome110")
@@ -175,8 +174,8 @@ def _yahoo_fetch_once(symbol: str, period: str) -> pd.DataFrame:
         if c not in df.columns: return pd.DataFrame()
     return df[needed].dropna().copy()
 
-def _yahoo_fetch_with_retry(symbol: str, period: str, max_retries: int = 3) -> pd.DataFrame:
-    """失敗自動重試(被 rate limit 時退避)"""
+def _yahoo_fetch_with_retry(symbol: str, period: str, max_retries: int = 2) -> pd.DataFrame:
+    """失敗自動重試(較短退避時間,避免使用者等太久)"""
     import time, random
     for attempt in range(max_retries):
         try:
@@ -184,25 +183,22 @@ def _yahoo_fetch_with_retry(symbol: str, period: str, max_retries: int = 3) -> p
             if not df.empty: return df
         except Exception as e:
             if "rate" in str(e).lower() or "too many" in str(e).lower():
-                time.sleep((2 ** attempt) + random.random())
+                time.sleep(1.0 + random.random())
                 continue
             if attempt < max_retries - 1:
-                time.sleep(0.5 + random.random())
+                time.sleep(0.3 + random.random() * 0.3)
                 continue
     return pd.DataFrame()
 
 def fetch_chart(symbol: str, period: str = "9mo") -> pd.DataFrame:
-    """從 Yahoo 抓 OHLCV,自動重試、補指標。失敗回傳空 DataFrame 但不進 cache"""
     df = _yahoo_fetch_with_retry(symbol, period)
     if df.empty: return df
-    # 直接複用 indicators.add_indicators,跟 scanner 用同一套指標
     try:
         return add_indicators(df)
     except Exception:
         return df
 
 def fetch_chart_by_code(code: str, period: str = "9mo") -> Tuple[str, pd.DataFrame]:
-    """自動試 .TW / .TWO"""
     code = str(code).strip()
     if not code.isdigit(): return "", pd.DataFrame()
     for sym in [f"{code}.TW", f"{code}.TWO"]:
@@ -210,19 +206,13 @@ def fetch_chart_by_code(code: str, period: str = "9mo") -> Tuple[str, pd.DataFra
         if not df.empty: return sym, df
     return "", pd.DataFrame()
 
-# 只 cache 成功的結果,失敗不進 cache (ttl=1800)
 @st.cache_data(ttl=1800, show_spinner=False)
 def cached_fetch_chart(symbol: str, period: str) -> pd.DataFrame:
-    df = fetch_chart(symbol, period)
-    if df.empty:
-        # 透過 raise 讓 cache 不保存 empty(Streamlit 會保存 exception,但下次呼叫會重算)
-        return df
-    return df
+    return fetch_chart(symbol, period)
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cached_fetch_by_code(code: str, period: str) -> Tuple[str, pd.DataFrame]:
-    sym, df = fetch_chart_by_code(code, period)
-    return sym, df
+    return fetch_chart_by_code(code, period)
 
 # =========================================================
 # 大盤環境判斷
@@ -230,7 +220,6 @@ def cached_fetch_by_code(code: str, period: str) -> Tuple[str, pd.DataFrame]:
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_market_regime() -> Dict[str, Any]:
-    """抓加權指數 ^TWII,判斷大盤多空"""
     try:
         df = _yahoo_fetch_with_retry("^TWII", "6mo", max_retries=2)
         if df.empty:
@@ -276,22 +265,34 @@ def get_market_regime() -> Dict[str, Any]:
         return {"status": "unknown", "regime": "未知", "reason": f"判斷失敗: {e}"}
 
 # =========================================================
-# 深度技術分析(7 區塊)
+# 深度技術分析
 # =========================================================
 
+def _pick_col(df: pd.DataFrame, *names):
+    """從多個可能欄名擇一(大小寫容錯)"""
+    for n in names:
+        if n in df.columns:
+            return df[n]
+    return None
+
+def _pick_val(row: pd.Series, *names):
+    for n in names:
+        v = row.get(n)
+        if v is not None and not (isinstance(v, float) and np.isnan(v)):
+            return v
+    return None
+
 def _trend_diagnosis(df: pd.DataFrame) -> Dict[str, Any]:
-    """趨勢診斷:均線排列 + 位階"""
     if df.empty or len(df) < 60:
         return {"alignment": "資料不足", "detail": "-", "dist_ma60": None, "year_pct": None}
 
     curr = df.iloc[-1]
     close = safe_float(curr["Close"])
-    ma5  = safe_float(curr.get("SMA5") or curr.get("MA5"))
-    ma10 = safe_float(curr.get("SMA10") or curr.get("MA10"))
-    ma20 = safe_float(curr.get("SMA20") or curr.get("MA20"))
-    ma60 = safe_float(curr.get("SMA60") or curr.get("MA60"))
+    ma5  = safe_float(_pick_val(curr, "SMA5", "MA5"))
+    ma10 = safe_float(_pick_val(curr, "SMA10", "MA10"))
+    ma20 = safe_float(_pick_val(curr, "SMA20", "MA20"))
+    ma60 = safe_float(_pick_val(curr, "SMA60", "MA60"))
 
-    # 均線排列
     if close > ma5 > ma10 > ma20 > ma60:
         alignment = "🟢 完全多頭排列"
         detail = "短中長期均線由上而下完整多頭,趨勢最強"
@@ -311,10 +312,8 @@ def _trend_diagnosis(df: pd.DataFrame) -> Dict[str, Any]:
         alignment = "⚪ 整理"
         detail = "均線糾結,方向不明"
 
-    # 距離季線
     dist_ma60 = (close - ma60) / ma60 * 100 if ma60 > 0 else 0
 
-    # 近 240 日位階(百分位)
     year_pct = None
     if len(df) >= 120:
         year_window = df.tail(min(240, len(df)))
@@ -331,19 +330,22 @@ def _trend_diagnosis(df: pd.DataFrame) -> Dict[str, Any]:
     }
 
 def _volume_analysis(df: pd.DataFrame) -> Dict[str, Any]:
-    """量價分析:健康放量 / 量縮整理 / 價漲量縮"""
     if df.empty or len(df) < 20:
         return {"status": "資料不足", "detail": "-", "vol_ratio": None}
 
     curr = df.iloc[-1]
     prev = df.iloc[-2] if len(df) >= 2 else curr
 
-    price_chg = (safe_float(curr["Close"]) - safe_float(prev["Close"])) / safe_float(prev["Close"]) * 100 \
-                if safe_float(prev["Close"]) > 0 else 0
-    vol_ratio = safe_float(curr.get("VOL_RATIO"))
+    price_chg = 0
+    prev_close = safe_float(prev["Close"])
+    if prev_close > 0:
+        price_chg = (safe_float(curr["Close"]) - prev_close) / prev_close * 100
+
+    vol_ratio = safe_float(_pick_val(curr, "VOL_RATIO"))
     if vol_ratio == 0:
-        vma20 = safe_float(curr.get("VOL_MA20"))
-        vol_ratio = safe_float(curr["Volume"]) / vma20 if vma20 > 0 else 0
+        vma20 = safe_float(_pick_val(curr, "VOL_MA20"))
+        if vma20 > 0:
+            vol_ratio = safe_float(curr["Volume"]) / vma20
 
     if price_chg > 0.5 and vol_ratio >= 1.5:
         status, detail = "🟢 健康放量上攻", f"今日漲 {price_chg:.1f}%、量比 {vol_ratio:.2f},資金進場強勢"
@@ -361,7 +363,6 @@ def _volume_analysis(df: pd.DataFrame) -> Dict[str, Any]:
     return {"status": status, "detail": detail, "vol_ratio": vol_ratio, "price_chg": price_chg}
 
 def _signal_strength(row_data: Dict[str, Any]) -> Dict[str, Any]:
-    """訊號強度:拆解 A1/A2 條件 + 加分明細"""
     grade = str(row_data.get("grade", "-"))
     score = safe_int(row_data.get("score", 0))
     reasons = str(row_data.get("reasons", ""))
@@ -394,57 +395,48 @@ def _signal_strength(row_data: Dict[str, Any]) -> Dict[str, Any]:
 
 def _risk_warnings(df: pd.DataFrame, row_data: Dict[str, Any],
                    trend: Dict[str, Any], market: Dict[str, Any]) -> List[str]:
-    """風險警示清單"""
     warnings = []
 
-    # 1. 大盤環境弱
     if market.get("status") == "bear":
         warnings.append(f"🔴 大盤{market.get('regime')},訊號勝率打折,建議減倉或觀望")
     elif market.get("status") == "neutral":
         warnings.append(f"🟡 大盤{market.get('regime')},建議降低單筆倉位")
 
-    # 2. 距離季線過遠
     dist = trend.get("dist_ma60")
     if dist is not None and dist > 12:
         warnings.append(f"🔴 距季線 +{dist:.1f}%,追高風險極高,建議等回踩")
     elif dist is not None and dist > 8:
         warnings.append(f"🟡 距季線 +{dist:.1f}%,乖離偏大,分批買較安全")
 
-    # 3. 位階過高
     year_pct = trend.get("year_pct")
     if year_pct is not None and year_pct > 90:
         warnings.append(f"🟡 年內位階 {year_pct:.0f}%(接近高點),反壓沉重")
 
-    # 4. RSI 過熱
     if not df.empty:
-        rsi = safe_float(df.iloc[-1].get("RSI"))
+        rsi = safe_float(_pick_val(df.iloc[-1], "RSI", "RSI14"))
         if rsi >= 80:
             warnings.append(f"🔴 RSI {rsi:.0f} 嚴重過熱,短線修正機率高")
         elif rsi >= 70:
             warnings.append(f"🟡 RSI {rsi:.0f} 過熱區,留意拉回")
 
-    # 5. 布林外
     if not df.empty:
         curr = df.iloc[-1]
         close = safe_float(curr["Close"])
-        bb_up = safe_float(curr.get("BB_Upper") or curr.get("BB_UPPER"))
+        bb_up = safe_float(_pick_val(curr, "BB_Upper", "BB_UPPER", "BBH"))
         if bb_up > 0 and close > bb_up * 1.02:
             warnings.append(f"🟡 股價突破布林上軌 2% 以上,短線過熱")
 
-    # 6. 連漲天數
     if len(df) >= 5:
         closes = df["Close"].tail(6).tolist()
         up_days = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i-1])
         if up_days >= 5:
             warnings.append(f"🟡 連 {up_days} 日收紅,短線拉回機率升高")
 
-    # 7. A1 但量比不足
     if str(row_data.get("grade")) == "A1":
         vr = safe_float(row_data.get("vol_ratio"))
         if 0 < vr < 1.3:
             warnings.append(f"🟡 A1 突破但量比只 {vr:.2f},突破有效性存疑")
 
-    # 8. 週線未站上
     if not df.empty and len(df) >= 100:
         weekly_ma = df["Close"].rolling(100).mean().iloc[-1]
         if safe_float(df.iloc[-1]["Close"]) < safe_float(weekly_ma):
@@ -457,24 +449,22 @@ def _risk_warnings(df: pd.DataFrame, row_data: Dict[str, Any],
 
 def _entry_strategy(df: pd.DataFrame, row_data: Dict[str, Any],
                     trend: Dict[str, Any]) -> Dict[str, Any]:
-    """進場策略:三劇本 + 倉位建議"""
     if df.empty:
         return {}
 
     curr = df.iloc[-1]
     close = safe_float(curr["Close"])
-    atr = safe_float(curr.get("ATR"))
+    atr = safe_float(_pick_val(curr, "ATR"))
     if atr == 0:
         atr = (safe_float(curr["High"]) - safe_float(curr["Low"])) or (close * 0.02)
 
-    ma10 = safe_float(curr.get("SMA10") or curr.get("MA10"))
-    ma20 = safe_float(curr.get("SMA20") or curr.get("MA20"))
-    ma60 = safe_float(curr.get("SMA60") or curr.get("MA60"))
+    ma10 = safe_float(_pick_val(curr, "SMA10", "MA10"))
+    ma20 = safe_float(_pick_val(curr, "SMA20", "MA20"))
+    ma60 = safe_float(_pick_val(curr, "SMA60", "MA60"))
 
     grade = str(row_data.get("grade", ""))
     dist_ma60 = trend.get("dist_ma60") or 0
 
-    # 倉位建議
     if dist_ma60 > 10:
         position = "20-30%(乖離過大)"
     elif dist_ma60 > 6:
@@ -487,12 +477,10 @@ def _entry_strategy(df: pd.DataFrame, row_data: Dict[str, Any],
         position = "30-50%"
 
     if grade == "A1":
-        # 突破型
         aggressive = {"price": close, "desc": "今日收盤直接買進(追突破)"}
         moderate = {"price": ma10, "desc": "等拉回 MA10 再買(較穩)"}
         conservative = {"price": ma20, "desc": "等回踩 MA20 再買(最安全)"}
     else:
-        # 回踩型
         aggressive = {"price": close, "desc": "今日價位直接買(已在回踩買點)"}
         moderate = {"price": ma20, "desc": "等再回踩 MA20 加碼"}
         conservative = {"price": ma60, "desc": "等回踩季線才買"}
@@ -507,7 +495,6 @@ def _entry_strategy(df: pd.DataFrame, row_data: Dict[str, Any],
 
 def _stop_loss_targets(df: pd.DataFrame, row_data: Dict[str, Any],
                        entry: Dict[str, Any]) -> Dict[str, Any]:
-    """停損停利:ATR 倍數 + 關鍵支撐雙算法"""
     if df.empty:
         return {}
 
@@ -515,22 +502,19 @@ def _stop_loss_targets(df: pd.DataFrame, row_data: Dict[str, Any],
     close = safe_float(curr["Close"])
     atr = entry.get("atr", close * 0.02)
 
-    ma10 = safe_float(curr.get("SMA10") or curr.get("MA10"))
-    ma20 = safe_float(curr.get("SMA20") or curr.get("MA20"))
-    ma60 = safe_float(curr.get("SMA60") or curr.get("MA60"))
+    ma10 = safe_float(_pick_val(curr, "SMA10", "MA10"))
+    ma20 = safe_float(_pick_val(curr, "SMA20", "MA20"))
+    ma60 = safe_float(_pick_val(curr, "SMA60", "MA60"))
 
-    # 停損:ATR 2 倍 vs MA10 取高者(較寬)
     atr_stop = close - 2 * atr
     stop_short = max(atr_stop, ma10) if ma10 > 0 else atr_stop
     stop_wave = ma20 if ma20 > 0 else close * 0.93
     stop_hard = ma60 if ma60 > 0 else close * 0.88
 
-    # 停利:ATR 3 倍 vs 前波高點
     recent_high = safe_float(df.tail(60)["High"].max())
     target_1 = close + 3 * atr
     target_2 = max(recent_high * 1.05, close + 6 * atr)
 
-    # 風報比
     risk = close - stop_short
     reward = target_1 - close
     rr = reward / risk if risk > 0 else 0
@@ -545,7 +529,7 @@ def _stop_loss_targets(df: pd.DataFrame, row_data: Dict[str, Any],
     }
 
 # =========================================================
-# 圖表 — 解析度升級
+# 圖表 — 欄位大小寫容錯
 # =========================================================
 
 _BG   = "#131722"
@@ -557,7 +541,6 @@ _DN   = "#26a69a"
 
 def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
                    period_bars: int = 120) -> go.Figure:
-    """專業級 K 線圖:4 面板 + 買賣點只畫最近 30 根"""
     cdf = df.tail(period_bars).copy()
     n = len(cdf)
     xs = list(range(n))
@@ -570,10 +553,11 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
         vertical_spacing=0.025,
     )
 
-    # ── 布林填充 ─────────────────────────────────
-    bb_u = cdf.get("BB_Upper", cdf.get("BB_UPPER"))
-    bb_m = cdf.get("BB_Mid",   cdf.get("BB_MID"))
-    bb_l = cdf.get("BB_Lower", cdf.get("BB_LOWER"))
+    # 布林(容錯 5 種命名)
+    bb_u = _pick_col(cdf, "BB_Upper", "BB_UPPER", "BBH")
+    bb_m = _pick_col(cdf, "BB_Mid",   "BB_MID",   "BB_MIDDLE")
+    bb_l = _pick_col(cdf, "BB_Lower", "BB_LOWER", "BBL")
+
     if bb_u is not None and bb_l is not None:
         fig.add_trace(go.Scatter(
             x=xs + xs[::-1],
@@ -583,39 +567,34 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
             showlegend=False, hoverinfo="skip",
         ), row=1, col=1)
 
-        for col_data, lbl, color, dash, w in [
-            (bb_u, "布林上", "#5c7cfa", "dot", 1),
-            (bb_m, "布林中", "#ff9800", "dash", 1.2),
-            (bb_l, "布林下", "#5c7cfa", "dot", 1),
-        ]:
-            if col_data is not None:
-                fig.add_trace(go.Scatter(
-                    x=xs, y=col_data, mode="lines", name=lbl,
-                    line=dict(color=color, width=w, dash=dash),
-                    hovertemplate=f"{lbl}: %{{y:.2f}}<extra></extra>",
-                ), row=1, col=1)
-
-    # ── 均線:粗細分級 ───────────────────────────
-    for col, lbl, color, w in [
-        ("SMA5",  "MA5",  "#f48fb1", 1.0),
-        ("SMA10", "MA10", "#ce93d8", 1.2),
-        ("SMA20", "MA20", "#4dd0e1", 1.6),
-        ("SMA60", "MA60", "#ffb74d", 2.2),
+    for col_data, lbl, color, dash, w in [
+        (bb_u, "布林上", "#5c7cfa", "dot", 1),
+        (bb_m, "布林中", "#ff9800", "dash", 1.2),
+        (bb_l, "布林下", "#5c7cfa", "dot", 1),
     ]:
-        alt = col.replace("SMA", "MA")
-        if col in cdf.columns:
-            vals = cdf[col]
-        elif alt in cdf.columns:
-            vals = cdf[alt]
-        else:
-            continue
+        if col_data is not None:
+            fig.add_trace(go.Scatter(
+                x=xs, y=col_data, mode="lines", name=lbl,
+                line=dict(color=color, width=w, dash=dash),
+                hovertemplate=f"{lbl}: %{{y:.2f}}<extra></extra>",
+            ), row=1, col=1)
+
+    # 均線 — 粗細分級
+    for cols, lbl, color, w in [
+        (["SMA5", "MA5"],   "MA5",  "#f48fb1", 1.0),
+        (["SMA10", "MA10"], "MA10", "#ce93d8", 1.2),
+        (["SMA20", "MA20"], "MA20", "#4dd0e1", 1.6),
+        (["SMA60", "MA60"], "MA60", "#ffb74d", 2.2),
+    ]:
+        vals = _pick_col(cdf, *cols)
+        if vals is None: continue
         fig.add_trace(go.Scatter(
             x=xs, y=vals, mode="lines", name=lbl,
             line=dict(color=color, width=w),
             hovertemplate=f"{lbl}: %{{y:.2f}}<extra></extra>",
         ), row=1, col=1)
 
-    # ── K 線 ─────────────────────────────────────
+    # K 線
     fig.add_trace(go.Candlestick(
         x=xs,
         open=cdf["Open"], high=cdf["High"],
@@ -630,7 +609,7 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
         hoverlabel=dict(bgcolor=_PAN),
     ), row=1, col=1)
 
-    # ── 買賣停損線 — 只畫最近 30 根 ───────────────
+    # 買賣停損線 — 只畫最近 30 根
     ref_start = max(0, n - 30)
     for y_val, lbl, color, dash in [
         (prices.get("aggressive"),   "積極買", _UP,       "solid"),
@@ -662,48 +641,45 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
             row=1, col=1,
         )
 
-    # ── 成交量 ───────────────────────────────────
+    # 成交量
     fig.add_trace(go.Bar(
         x=xs, y=cdf["Volume"],
         marker_color=ud, marker_line_width=0, showlegend=False,
         hovertemplate="量: %{y:,.0f}<extra></extra>",
     ), row=2, col=1)
 
-    if "VOL_MA20" in cdf.columns:
+    vma = _pick_col(cdf, "VOL_MA20", "VOL_MA5")
+    if vma is not None:
         fig.add_trace(go.Scatter(
-            x=xs, y=cdf["VOL_MA20"], mode="lines",
+            x=xs, y=vma, mode="lines",
             line=dict(color="#ffeb3b", width=1.2), showlegend=False,
-            hovertemplate="量MA20: %{y:,.0f}<extra></extra>",
+            hovertemplate="量MA: %{y:,.0f}<extra></extra>",
         ), row=2, col=1)
 
-    # ── KD ───────────────────────────────────────
-    if "K" in cdf.columns and "D" in cdf.columns:
+    # KD
+    k_col = _pick_col(cdf, "K")
+    d_col = _pick_col(cdf, "D")
+    if k_col is not None and d_col is not None:
         fig.add_trace(go.Scatter(
-            x=xs, y=cdf["K"], mode="lines", name="K",
-            line=dict(color="#f48fb1", width=1.5),
-            showlegend=False,
+            x=xs, y=k_col, mode="lines", name="K",
+            line=dict(color="#f48fb1", width=1.5), showlegend=False,
             hovertemplate="K: %{y:.1f}<extra></extra>",
         ), row=3, col=1)
         fig.add_trace(go.Scatter(
-            x=xs, y=cdf["D"], mode="lines", name="D",
-            line=dict(color="#4dd0e1", width=1.5),
-            showlegend=False,
+            x=xs, y=d_col, mode="lines", name="D",
+            line=dict(color="#4dd0e1", width=1.5), showlegend=False,
             hovertemplate="D: %{y:.1f}<extra></extra>",
         ), row=3, col=1)
-        # 80 / 50 / 20 參考線(實線)
         for y_ref, col, dash in [(80, "#e57373", "solid"),
                                   (50, "#666", "dot"),
                                   (20, "#81c784", "solid")]:
             fig.add_hline(y=y_ref, row=3, col=1,
                           line=dict(color=col, width=0.8, dash=dash))
 
-    # ── MACD ─────────────────────────────────────
-    hist_col = "MACD_Hist" if "MACD_Hist" in cdf.columns else \
-               ("MACD_HIST" if "MACD_HIST" in cdf.columns else None)
-    macd_col = "MACD" if "MACD" in cdf.columns else \
-               ("DIF" if "DIF" in cdf.columns else None)
-    sig_col = "MACD_Signal" if "MACD_Signal" in cdf.columns else \
-              ("DEA" if "DEA" in cdf.columns else None)
+    # MACD — 容錯 3 種命名
+    hist_col = next((c for c in ["MACD_Hist", "MACD_HIST", "MACD_hist"] if c in cdf.columns), None)
+    macd_col = next((c for c in ["MACD", "DIF"] if c in cdf.columns), None)
+    sig_col  = next((c for c in ["MACD_Signal", "MACD_signal", "DEA"] if c in cdf.columns), None)
 
     if hist_col:
         mc = [_UP if v >= 0 else _DN for v in cdf[hist_col]]
@@ -725,10 +701,9 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
             hovertemplate="Signal: %{y:.4f}<extra></extra>",
         ), row=4, col=1)
 
-    # 零軸粗線
     fig.add_hline(y=0, row=4, col=1, line=dict(color="#888", width=1))
 
-    # ── Layout ──────────────────────────────────
+    # Layout
     step = max(1, n // 12)
     tv = xs[::step]
     tt = [dts[i] for i in tv]
@@ -761,7 +736,6 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
         yaxis4=dict(**ax_base, side="right"),
     )
 
-    # 副圖標籤
     for y_pos, lbl in [(0.76, "K 線 + 布林"), (0.46, "成交量"),
                         (0.30, "KD (9)"), (0.12, "MACD")]:
         fig.add_annotation(
@@ -782,19 +756,18 @@ def make_pro_chart(df: pd.DataFrame, prices: Dict[str, float], title: str,
 
 def render_technical_analysis(df: pd.DataFrame, row_data: Dict[str, Any],
                               market: Dict[str, Any]):
-    """7 區塊結構化技術分析"""
     if df.empty:
         st.warning("技術分析無法產生(資料不足)")
         return None
 
-    # 1. 大盤環境
+    # 1. 大盤
     st.markdown("#### 📊 大盤環境")
     mc1, mc2, mc3 = st.columns([1, 1, 3])
     mc1.metric("加權狀態", market.get("regime", "未知"))
     mc2.metric("收盤", fmt_num(market.get("close"), 1))
     mc3.info(market.get("reason", "-"))
 
-    # 2. 趨勢診斷
+    # 2. 趨勢
     st.markdown("#### 📈 趨勢診斷")
     trend = _trend_diagnosis(df)
     tc1, tc2, tc3 = st.columns([1.5, 1, 1])
@@ -830,14 +803,14 @@ def render_technical_analysis(df: pd.DataFrame, row_data: Dict[str, Any],
         with st.expander("查看完整條件明細"):
             st.write(sig["reasons"])
 
-    # 4. 量價分析
+    # 4. 量價
     st.markdown("#### 💹 量價分析")
     vol = _volume_analysis(df)
     vc1, vc2 = st.columns([1, 3])
     vc1.metric("狀態", vol["status"])
     vc2.info(vol["detail"])
 
-    # 5. 進場策略
+    # 5. 進場
     st.markdown("#### 🎯 進場策略")
     entry = _entry_strategy(df, row_data, trend)
     st.caption(f"建議倉位:**{entry.get('position', '-')}**")
@@ -868,7 +841,7 @@ def render_technical_analysis(df: pd.DataFrame, row_data: Dict[str, Any],
     st.caption(f"風報比(短停損 vs 第一目標):**{fmt_num(targets.get('rr'), 2)}** — "
                f"{'✅ 佳' if targets.get('rr', 0) >= 2 else '⚠️ 偏低' if targets.get('rr', 0) < 1.5 else '可接受'}")
 
-    # 7. 風險警示
+    # 7. 警示
     st.markdown("#### ⚠️ 風險警示")
     warnings_list = _risk_warnings(df, row_data, trend, market)
     for w in warnings_list:
@@ -892,20 +865,75 @@ def render_technical_analysis(df: pd.DataFrame, row_data: Dict[str, Any],
     }
 
 # =========================================================
-# 基本面渲染
+# 基本面渲染 — 三源 fallback
 # =========================================================
 
-def render_fundamental(stock_id: str, market_type: Optional[str]):
-    """基本面:殖利率 / PE / PB / ROE / 股利"""
-    token = get_finmind_token()
-    try:
-        fund = load_fundamental(stock_id, market_type, token if token else None)
-    except Exception as e:
-        st.warning(f"基本面資料讀取失敗: {e}")
-        return
+def _is_empty_fund(f):
+    if not f: return True
+    keys = ["pe", "pb", "eps", "roe", "yield", "dividend"]
+    def _nan(v):
+        try: return pd.isna(v)
+        except Exception: return v is None
+    return all(_nan(f.get(k)) for k in keys)
 
-    if not isinstance(fund, dict):
-        st.info("查無基本面資料")
+def render_fundamental(stock_id: str, market_type: Optional[str]):
+    token = get_finmind_token()
+    fund = None
+    errors = []
+
+    # 1) FinMind + TWSE(透過 data_loader.load_fundamental)
+    if token:
+        try:
+            fund = load_fundamental(stock_id, market_type, token)
+            if not isinstance(fund, dict):
+                fund = None
+        except Exception as e:
+            errors.append(f"FinMind/TWSE: {e}")
+            fund = None
+    else:
+        errors.append("未設定 FINMIND_TOKEN(Streamlit Secrets)")
+
+    # 2) Yahoo .info fallback
+    if _is_empty_fund(fund):
+        try:
+            symbols = ([f"{stock_id}.TWO", f"{stock_id}.TW"]
+                       if market_type == "tpex"
+                       else [f"{stock_id}.TW", f"{stock_id}.TWO"])
+            for sym in symbols:
+                try:
+                    from curl_cffi import requests as cr
+                    session = cr.Session(impersonate="chrome110")
+                    info = yf.Ticker(sym, session=session).info or {}
+                except Exception:
+                    info = yf.Ticker(sym).info or {}
+
+                if not info: continue
+
+                roe_raw = info.get("returnOnEquity")
+                dy_raw = info.get("dividendYield")
+
+                fund = {
+                    "pe":       safe_float(info.get("trailingPE"), float('nan')),
+                    "pb":       safe_float(info.get("priceToBook"), float('nan')),
+                    "eps":      safe_float(info.get("trailingEps"), float('nan')),
+                    "roe":      (safe_float(roe_raw, float('nan')) * 100
+                                 if roe_raw is not None else float('nan')),
+                    "dividend": safe_float(info.get("dividendRate"), float('nan')),
+                    "yield":    (safe_float(dy_raw, float('nan')) * 100
+                                 if dy_raw is not None else float('nan')),
+                    "source_note": f"Yahoo {sym}",
+                }
+                if not _is_empty_fund(fund):
+                    break
+        except Exception as e:
+            errors.append(f"Yahoo: {e}")
+
+    if _is_empty_fund(fund):
+        st.warning("基本面資料暫時無法取得。")
+        st.caption("可能原因:FinMind token 無效、Yahoo rate limit、或此股未建立基本面資料")
+        if errors:
+            with st.expander("技術細節"):
+                for e in errors: st.code(e)
         return
 
     fc1, fc2, fc3, fc4, fc5 = st.columns(5)
@@ -915,16 +943,16 @@ def render_fundamental(stock_id: str, market_type: Optional[str]):
     fc4.metric("PB",         fmt_num(fund.get("pb"), 2))
     fc5.metric("ROE %",      fmt_num(fund.get("roe"), 2))
 
-    # 估值評語
     comments = []
     pe = safe_float(fund.get("pe"), 0)
     pb = safe_float(fund.get("pb"), 0)
     dy = safe_float(fund.get("yield"), 0)
     roe = safe_float(fund.get("roe"), 0)
 
-    if 0 < pe <= 15: comments.append("🟢 PE 偏低,估值合理")
+    if pe > 40: comments.append("🔴 PE 過高,估值偏貴")
+    elif pe > 25: comments.append("🔴 PE 偏高")
     elif 15 < pe <= 25: comments.append("🟡 PE 中性")
-    elif pe > 25: comments.append("🔴 PE 偏高,估值拉高")
+    elif 0 < pe <= 15: comments.append("🟢 PE 偏低,估值合理")
 
     if 0 < pb <= 1.5: comments.append("🟢 PB 偏低")
     elif pb > 3: comments.append("🟡 PB 偏高")
@@ -1101,7 +1129,6 @@ market   = get_market_regime()
 if st.session_state.enable_auto_refresh:
     auto_refresh_block(st.session_state.refresh_sec)
 
-# ── 頂部狀態列 ────────────────────────────────────────
 left, right = st.columns([3, 1])
 with left:
     st.caption(f"最後掃描時間:{latest.get('updated_at', 'N/A')}")
@@ -1117,12 +1144,10 @@ with left:
     else:
         st.error(msg or "讀取失敗")
 with right:
-    # 大盤環境標籤
     regime_color = {"bull": "🟢", "bear": "🔴", "neutral": "🟡"}.get(
         market.get("status"), "⚪")
     st.info(f"{regime_color} 大盤:{market.get('regime', '未知')}")
 
-# ── 指標卡 ────────────────────────────────────────────
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("總掃描池",    summ.get("pool_total", 0))
 m2.metric("成功分析數",  summ.get("success_count", 0))
@@ -1130,7 +1155,6 @@ m3.metric("缺資料/失敗", summ.get("failed_count", 0))
 m4.metric("A1 突破型",   summ.get("A1_count", 0))
 m5.metric("A2 回踩型",   summ.get("A2_count", 0))
 
-# ── 篩選 ──────────────────────────────────────────────
 df = rank_df(pd.DataFrame(latest.get("results", [])))
 if not df.empty and "grade" in df.columns:
     df = df[df["grade"].isin(st.session_state.grade_filter)]
@@ -1139,7 +1163,7 @@ if not df.empty:
         df = df[(df["close"] >= st.session_state.min_price) &
                 (df["close"] <= st.session_state.max_price)]
     if "volume" in df.columns:
-        df = df[df["volume"] >= st.session_state.min_volume * 1000]  # 張→股
+        df = df[df["volume"] >= st.session_state.min_volume * 1000]
     if st.session_state.max_volume > 0 and "volume" in df.columns:
         df = df[df["volume"] <= st.session_state.max_volume * 1000]
     if "vol_ratio" in df.columns:
@@ -1147,16 +1171,13 @@ if not df.empty:
 
 df_show = df.head(st.session_state.top_n).copy() if not df.empty else pd.DataFrame()
 
-# ── 頁面切換 ──────────────────────────────────────────
 if st.session_state.pending_page_mode in VALID_PAGES:
     st.session_state.page_mode = st.session_state.pending_page_mode
     st.session_state.pending_page_mode = None
 
 page_mode = st.radio("功能選單", VALID_PAGES, horizontal=True, key="page_mode")
 
-# ═════════════════════════════════════════════════════════
-# 最新結果
-# ═════════════════════════════════════════════════════════
+# ── 最新結果 ──────────────────────────────────────────
 
 if page_mode == "最新結果":
     st.subheader("最新掃描結果")
@@ -1186,9 +1207,7 @@ if page_mode == "最新結果":
             st.dataframe(pd.DataFrame(failed),
                         use_container_width=True, hide_index=True)
 
-# ═════════════════════════════════════════════════════════
-# 單筆個股分析
-# ═════════════════════════════════════════════════════════
+# ── 單筆個股分析 ──────────────────────────────────────
 
 elif page_mode == "單筆個股分析":
     st.subheader("單筆個股分析")
@@ -1212,7 +1231,6 @@ elif page_mode == "單筆個股分析":
         if sdf.empty or not sym:
             st.warning("找不到此股票資料,請確認代號。")
         else:
-            # 取股票名
             try:
                 import twstock as _tw
                 _i = _tw.codes.get(code, None)
@@ -1224,23 +1242,20 @@ elif page_mode == "單筆個股分析":
 
             curr = sdf.iloc[-1]
 
-            # 頂部摘要
             c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("股票", f"{name}")
             c2.metric("代號", code)
             c3.metric("收盤", fmt_num(curr["Close"], 2))
             c4.metric("成交量", f"{safe_int(curr['Volume']):,}")
-            c5.metric("RSI14", fmt_num(curr.get("RSI"), 1))
+            c5.metric("RSI14", fmt_num(_pick_val(curr, "RSI", "RSI14"), 1))
 
-            # 構造一個類似 latest_scan 格式的 row_data
             row_data = {
                 "code": code, "name": name, "symbol": sym,
                 "grade": "-", "score": 0, "reasons": "",
                 "close": safe_float(curr["Close"]),
-                "vol_ratio": safe_float(curr.get("VOL_RATIO")),
+                "vol_ratio": safe_float(_pick_val(curr, "VOL_RATIO")),
             }
 
-            # 分頁:技術 / 基本 / 圖表
             tab1, tab2, tab3 = st.tabs(["📊 技術分析", "💰 基本面", "📈 專業圖表"])
 
             with tab1:
@@ -1257,9 +1272,7 @@ elif page_mode == "單筆個股分析":
                     use_container_width=True,
                 )
 
-# ═════════════════════════════════════════════════════════
-# 掃描個股圖表
-# ═════════════════════════════════════════════════════════
+# ── 掃描個股圖表 ──────────────────────────────────────
 
 elif page_mode == "掃描個股圖表":
     st.subheader("掃描個股深度分析")
@@ -1276,7 +1289,6 @@ elif page_mode == "掃描個股圖表":
         row = df_show.iloc[opts.index(sel)]
         row_data = row.to_dict()
 
-        # 頂部摘要
         c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("分級", badge(row.get("grade", "-")))
         c2.metric("收盤", fmt_num(row.get("close"), 2))
@@ -1315,16 +1327,12 @@ elif page_mode == "掃描個股圖表":
                     use_container_width=True,
                 )
 
-# ═════════════════════════════════════════════════════════
-# AI 學習
-# ═════════════════════════════════════════════════════════
+# ── AI 學習 ────────────────────────────────────────────
 
 elif page_mode == "AI學習":
     learning_panel(learning)
 
-# ═════════════════════════════════════════════════════════
-# 歷史紀錄
-# ═════════════════════════════════════════════════════════
+# ── 歷史紀錄 ──────────────────────────────────────────
 
 elif page_mode == "歷史紀錄":
     st.subheader("歷史紀錄")
