@@ -12,6 +12,8 @@ import pandas as pd
 import yfinance as yf
 import twstock
 
+from curl_cffi import requests as curl_requests
+
 DATA_DIR = "data"
 LATEST_JSON = os.path.join(DATA_DIR, "latest_scan.json")
 HISTORY_CSV = os.path.join(DATA_DIR, "scan_history.csv")
@@ -50,6 +52,12 @@ def safe_int(x, default=0):
     except Exception:
         return default
 
+def happened_in_last_n_days(cond_series: pd.Series, n: int = 3) -> bool:
+    """某布林序列在最後 n 日內是否有 True"""
+    if cond_series is None or len(cond_series) == 0:
+        return False
+    return bool(cond_series.tail(n).fillna(False).any())
+
 # =========================================================
 # 學習模型
 # =========================================================
@@ -66,7 +74,7 @@ DEFAULT_LEARNING = {
     },
     "thresholds": {
         "vol_ratio_min":        1.5,   # A1 量增最低倍數
-        "pullback_pct":         0.02,  # A2 回踩均線容忍範圍 ±2%
+        "pullback_pct":         0.02,  # A2 回踩均線容忍範圍
         "bonus_score_min":      15,    # 加分條件最低分數
         "success_return_5d":    3.0,
     },
@@ -112,9 +120,9 @@ def is_excluded_security(code: str, item) -> bool:
         return True
     if not code.isdigit() or len(code) != 4:
         return True
-    if code.startswith("00"):   # 排除 ETF（0050、0056 等）
+    if code.startswith("00"):   # 排除 ETF(0050、0056 等)
         return True
-    banned_keywords = ["ETN", "權證", "牛熊", "指數", "展牛", "展熊"]
+    banned_keywords = ["ETN", "權證", "牛熊", "指數", "展牛", "展熊", "DR", "存託"]
     if any(k in name     for k in banned_keywords):
         return True
     if any(k in sec_type for k in banned_keywords):
@@ -194,7 +202,7 @@ def enrich_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["RECENT_HIGH_20"] = df["High"].rolling(20).max()
     df["RECENT_LOW_20"]  = df["Low"].rolling(20).min()
 
-    # 週線 MA20 近似（100日週線）
+    # 週線 MA20 近似(100日週線)
     df["WEEKLY_MA20_APPROX"] = df["Close"].rolling(100).mean()
 
     return df
@@ -205,7 +213,9 @@ def enrich_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 def detect_a1_conditions(df: pd.DataFrame, thresholds: dict) -> dict:
     """
-    A1 突破型：所有條件必須全中才算 A1
+    A1 突破型:所有條件必須全中才算 A1
+    事件型條件(紅柱/均線交叉/突破高點)放寬到「近 3 日內發生」
+    狀態型條件(均線方向/量能/K棒)維持今日判斷
     """
     if len(df) < 65:
         return {}
@@ -223,27 +233,29 @@ def detect_a1_conditions(df: pd.DataFrame, thresholds: dict) -> dict:
     # 2. 股價站上 MA60
     above_ma60 = safe_float(curr["Close"]) > safe_float(curr["MA60"])
 
-    # 3. MACD HIST 由負轉正（第1根紅柱）
-    macd_first_red = (
-        safe_float(prev["MACD_HIST"]) <= 0 and
-        safe_float(curr["MACD_HIST"]) > 0
+    # 3. MACD HIST 由負轉正(近 3 日內出現第 1 根紅柱)
+    macd_cross_up_series = (
+        (df["MACD_HIST"].shift(1).fillna(0) <= 0) & (df["MACD_HIST"] > 0)
     )
+    macd_first_red = happened_in_last_n_days(macd_cross_up_series, n=3)
 
-    # 4. MA5 上穿 MA10
-    ma5_cross_ma10 = (
-        safe_float(prev["MA5"]) <= safe_float(prev["MA10"]) and
-        safe_float(curr["MA5"])  > safe_float(curr["MA10"])
+    # 4. MA5 上穿 MA10(近 3 日內)
+    ma5_cross_series = (
+        (df["MA5"].shift(1) <= df["MA10"].shift(1)) & (df["MA5"] > df["MA10"])
     )
+    ma5_cross_ma10 = happened_in_last_n_days(ma5_cross_series, n=3)
 
-    # 5. 突破近20日最高點
-    breakout_20d_high = (
-        safe_float(curr["Close"]) >= safe_float(df.iloc[-2]["RECENT_HIGH_20"])
-    ) if len(df) >= 21 else False
+    # 5. 突破近 20 日最高點(近 3 日內)
+    if len(df) >= 21:
+        breakout_series = df["Close"] >= df["RECENT_HIGH_20"].shift(1)
+        breakout_20d_high = happened_in_last_n_days(breakout_series, n=3)
+    else:
+        breakout_20d_high = False
 
-    # 6. 成交量 ≥ 5日均量 × 1.5 倍
+    # 6. 成交量 ≥ 5 日均量 × 1.5 倍
     vol_expand = safe_float(curr["VOL_RATIO"]) >= vol_ratio_min
 
-    # 7. 收紅K（收盤 > 開盤）
+    # 7. 收紅K(收盤 > 開盤)
     red_candle = safe_float(curr["Close"]) > safe_float(curr["Open"])
 
     return {
@@ -257,7 +269,7 @@ def detect_a1_conditions(df: pd.DataFrame, thresholds: dict) -> dict:
     }
 
 def is_a1(conds: dict) -> bool:
-    """A1：全部必要條件都要成立"""
+    """A1:全部必要條件都要成立"""
     required = [
         "a1_ma20_up",
         "a1_above_ma60",
@@ -275,7 +287,7 @@ def is_a1(conds: dict) -> bool:
 
 def detect_a2_conditions(df: pd.DataFrame, thresholds: dict) -> dict:
     """
-    A2 回踩型：所有條件必須全中才算 A2
+    A2 回踩型:所有條件必須全中才算 A2
     """
     if len(df) < 65:
         return {}
@@ -294,23 +306,31 @@ def detect_a2_conditions(df: pd.DataFrame, thresholds: dict) -> dict:
         safe_float(df.iloc[-1]["MA60"]) > safe_float(df.iloc[-10]["MA60"])
     ) if len(df) >= 11 else False
 
-    # 2. 均線多頭排列：MA5 > MA10 > MA20
+    # 2. 均線多頭排列:MA5 > MA10 > MA20
     bullish_alignment = (
         safe_float(curr["MA5"]) > ma10 > ma20
     )
 
-    # 3. 股價回踩 MA10 或 MA20（±2%以內）
-    near_ma10 = abs(close - ma10) / ma10 <= pullback_pct if ma10 > 0 else False
-    near_ma20 = abs(close - ma20) / ma20 <= pullback_pct if ma20 > 0 else False
+    # 3. 股價回踩 MA10 或 MA20
+    #    真正的回踩:在均線下方 pullback_pct 至均線上方 pullback_pct/4 之內
+    #    不包括已經漲離均線 2% 的情況
+    def _in_pullback_zone(price, ma, tol_below, tol_above):
+        if ma <= 0:
+            return False
+        rel = (price - ma) / ma
+        return -tol_below <= rel <= tol_above
+
+    near_ma10 = _in_pullback_zone(close, ma10, pullback_pct, pullback_pct / 4)
+    near_ma20 = _in_pullback_zone(close, ma20, pullback_pct, pullback_pct / 4)
     pullback_to_ma = near_ma10 or near_ma20
 
-    # 4. MACD HIST > 0（仍在紅柱中）
+    # 4. MACD HIST > 0(仍在紅柱中)
     macd_positive = safe_float(curr["MACD_HIST"]) > 0
 
-    # 5. 縮量回踩（今日量 < 昨日量）
+    # 5. 縮量回踩(今日量 < 昨日量)
     vol_shrink = safe_float(curr["Volume"]) < safe_float(df.iloc[-2]["Volume"])
 
-    # 6. 近3日低點高於前3日低點（底部墊高）
+    # 6. 近 3 日低點高於前 3 日低點(底部墊高)
     if len(df) >= 6:
         recent_low  = df.iloc[-3:]["Low"].min()
         prev_low    = df.iloc[-6:-3]["Low"].min()
@@ -328,7 +348,7 @@ def detect_a2_conditions(df: pd.DataFrame, thresholds: dict) -> dict:
     }
 
 def is_a2(conds: dict) -> bool:
-    """A2：全部必要條件都要成立"""
+    """A2:全部必要條件都要成立"""
     required = [
         "a2_ma60_up",
         "a2_bullish_alignment",
@@ -340,12 +360,12 @@ def is_a2(conds: dict) -> bool:
     return all(conds.get(k, False) for k in required)
 
 # =========================================================
-# 加分條件（A1、A2 共用）
+# 加分條件(A1、A2 共用)
 # =========================================================
 
 def calc_bonus_score(df: pd.DataFrame, weights: dict) -> tuple[int, list[str]]:
     """
-    加分條件：影響排序，門檻 ≥ 15 分才算 A 級
+    加分條件:影響排序,門檻 ≥ 15 分才算 A 級
     """
     if len(df) < 65:
         return 0, []
@@ -354,7 +374,7 @@ def calc_bonus_score(df: pd.DataFrame, weights: dict) -> tuple[int, list[str]]:
     score = 0
     tags  = []
 
-    # MA60 斜率向上（近10日持續上升）
+    # MA60 斜率向上(近 10 日持續上升)
     if len(df) >= 11:
         ma60_vals = [safe_float(df.iloc[-(i+1)]["MA60"]) for i in range(10)]
         if all(ma60_vals[i] > ma60_vals[i+1] for i in range(9)):
@@ -368,14 +388,14 @@ def calc_bonus_score(df: pd.DataFrame, weights: dict) -> tuple[int, list[str]]:
         score += w
         tags.append(f"量比≥2倍(+{w})")
 
-    # RSI 在 50~70（健康動能區）
+    # RSI 在 50~70(健康動能區)
     rsi_val = safe_float(curr["RSI14"])
     if 50 <= rsi_val <= 70:
         w = safe_int(weights.get("rsi_healthy", 8))
         score += w
         tags.append(f"RSI健康區({rsi_val:.1f})(+{w})")
 
-    # 布林通道寬度擴張（今日 > 5日前）
+    # 布林通道寬度擴張(今日 > 5 日前)
     if len(df) >= 6:
         bw_now  = safe_float(curr["BB_WIDTH"])
         bw_prev = safe_float(df.iloc[-6]["BB_WIDTH"])
@@ -384,7 +404,7 @@ def calc_bonus_score(df: pd.DataFrame, weights: dict) -> tuple[int, list[str]]:
             score += w
             tags.append(f"布林擴張(+{w})")
 
-    # 週線近似站上 MA20（100日均線）
+    # 週線近似站上 MA20(100 日均線)
     weekly_ma20 = safe_float(curr["WEEKLY_MA20_APPROX"])
     if weekly_ma20 > 0 and safe_float(curr["Close"]) > weekly_ma20:
         w = safe_int(weights.get("weekly_above_ma20", 12))
@@ -412,14 +432,8 @@ def decide_grade(
     return "-"
 
 # =========================================================
-# 抓價
+# 抓價(yfinance + curl_cffi Session)
 # =========================================================
-
-# =========================================================
-# 抓價（yfinance + curl_cffi Session）
-# =========================================================
-
-from curl_cffi import requests as curl_requests
 
 _YF_SESSION = None
 
@@ -453,6 +467,7 @@ def fetch_price_history(symbol: str, period: str = "12mo") -> tuple[pd.DataFrame
         return None, str(e)
 
 def fetch_forward_df(symbol: str) -> pd.DataFrame | None:
+    """供 backfill_history_returns 使用的後續收盤價抓取"""
     try:
         session = _get_session()
         ticker  = yf.Ticker(symbol, session=session)
@@ -490,35 +505,35 @@ def build_trade_prices(df: pd.DataFrame, grade: str) -> dict:
     recent_low  = safe_float(df.tail(20)["Low"].min())
 
     if grade == "A1":
-        # 突破型：積極買點＝當前收盤（突破點），回踩買點＝MA10
-        aggressive_buy  = round(close, 2)
-        pullback_buy    = round(ma10, 2)
+        # 突破型:積極買點=當前收盤(突破點),回踩買點=MA10
+        aggressive_buy   = round(close, 2)
+        pullback_buy     = round(ma10, 2)
         conservative_buy = round(ma20, 2)
-        stop_loss_short = round(ma10, 2)
-        stop_loss_wave  = round(ma20, 2)
+        stop_loss_short  = round(ma10, 2)
+        stop_loss_wave   = round(ma20, 2)
     else:
-        # 回踩型：積極買點＝MA10，回踩買點＝MA20
-        aggressive_buy  = round(ma10, 2)
-        pullback_buy    = round(ma20, 2)
+        # 回踩型:積極買點=MA10,回踩買點=MA20
+        aggressive_buy   = round(ma10, 2)
+        pullback_buy     = round(ma20, 2)
         conservative_buy = round(ma60, 2)
-        stop_loss_short = round(ma20, 2)
-        stop_loss_wave  = round(ma60, 2)
+        stop_loss_short  = round(ma20, 2)
+        stop_loss_wave   = round(ma60, 2)
 
     return {
-        "aggressive_buy_price":  aggressive_buy,
-        "pullback_buy_price":    pullback_buy,
+        "aggressive_buy_price":   aggressive_buy,
+        "pullback_buy_price":     pullback_buy,
         "conservative_buy_price": conservative_buy,
-        "sell_price_1":          round(bb_upper, 2),
-        "sell_price_2":          round(recent_high * 1.05, 2),  # 突破高點再上5%
-        "stop_loss_short":       stop_loss_short,
-        "stop_loss_wave":        stop_loss_wave,
-        "stop_loss_hard":        round(ma60, 2),
-        "support_1":             round(ma10, 2),
-        "support_2":             round(ma20, 2),
-        "support_3":             round(ma60, 2),
-        "resistance_1":          round(bb_upper, 2),
-        "resistance_2":          round(recent_high, 2),
-        "recent_low_20":         round(recent_low, 2),
+        "sell_price_1":           round(bb_upper, 2),
+        "sell_price_2":           round(recent_high * 1.05, 2),  # 突破高點再上 5%
+        "stop_loss_short":        stop_loss_short,
+        "stop_loss_wave":         stop_loss_wave,
+        "stop_loss_hard":         round(ma60, 2),
+        "support_1":              round(ma10, 2),
+        "support_2":              round(ma20, 2),
+        "support_3":              round(ma60, 2),
+        "resistance_1":           round(bb_upper, 2),
+        "resistance_2":           round(recent_high, 2),
+        "recent_low_20":          round(recent_low, 2),
     }
 
 def build_text_notes(grade: str, prices: dict) -> tuple[str, str, str]:
@@ -627,7 +642,7 @@ def analyze_one(stock: dict, learning: dict) -> tuple[dict | None, str]:
         "buy_note":    buy_note,
         "stop_note":   stop_note,
         "target_note": target_note,
-        # A1 條件欄位（供學習追蹤）
+        # A1 條件欄位(供學習追蹤)
         "cond_a1_ma20_up":          int(a1_conds.get("a1_ma20_up", False)),
         "cond_a1_above_ma60":       int(a1_conds.get("a1_above_ma60", False)),
         "cond_a1_macd_first_red":   int(a1_conds.get("a1_macd_first_red", False)),
@@ -662,28 +677,6 @@ def load_history_df() -> pd.DataFrame:
         return pd.read_csv(HISTORY_CSV, encoding="utf-8-sig")
     except Exception:
         return pd.DataFrame()
-
-def fetch_forward_df(symbol: str) -> pd.DataFrame | None:
-    try:
-        df = yf.download(
-            symbol,
-            period="18mo",
-            interval="1d",
-            auto_adjust=False,
-            progress=False,
-            threads=False,
-        )
-        if df is None or df.empty:
-            return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [c[0] for c in df.columns]
-        if "Close" not in df.columns:
-            return None
-        out = df[["Close"]].copy().dropna().reset_index()
-        out["Date"] = pd.to_datetime(out["Date"]).dt.date
-        return out
-    except Exception:
-        return None
 
 def backfill_history_returns(history_df: pd.DataFrame, learning: dict) -> pd.DataFrame:
     if history_df.empty:
@@ -764,7 +757,7 @@ def rebuild_learning(history_df: pd.DataFrame, old_learning: dict) -> dict:
         }
         base = DEFAULT_LEARNING["weights"].get(w_key, 10)
         if len(sub) >= 20:
-            # 比例式調整：勝率映射到 0.6~1.4 倍基礎權重
+            # 比例式調整:勝率映射到 0.6~1.4 倍基礎權重
             multiplier = max(0.6, min(1.4, win_rate / 55.0))
             new_weights[w_key] = max(1, round(base * multiplier))
 
@@ -780,7 +773,7 @@ def rebuild_learning(history_df: pd.DataFrame, old_learning: dict) -> dict:
             }
 
     # ── 動態調整加分門檻 ─────────────────────────────
-    # 若 A1 整體勝率 < 50%，提高加分門檻（讓標準更嚴）
+    # 若 A1 整體勝率 < 50%,提高加分門檻(讓標準更嚴)
     a1_stats = grade_stats.get("A1", {})
     if a1_stats.get("samples", 0) >= 30:
         current_min = safe_int(learning["thresholds"].get("bonus_score_min", 15))
@@ -840,7 +833,7 @@ def run_scan(max_workers: int = 12) -> dict:
                 if item is not None:
                     rows.append(item)
                 elif err == "not_qualified":
-                    not_qualified += 1      # 正常分析完，只是沒達標
+                    not_qualified += 1      # 正常分析完,只是沒達標
                 else:
                     fail_rows.append({
                         "code":   stock["code"],
@@ -858,15 +851,15 @@ def run_scan(max_workers: int = 12) -> dict:
                     "reason": str(e),
                 })
 
-    # 成功分析數 = 有A結果 + 分析完但未達標（兩者都是正常跑完的）
+    # 成功分析數 = 有 A 結果 + 分析完但未達標(兩者都是正常跑完的)
     success_count = len(rows) + not_qualified
     failed_count  = len(fail_rows)
 
     if not rows:
         payload = {
             "updated_at": now_str(),
-            "status":     "ok",   # 掃描本身成功，只是今天沒有 A 級
-            "message":    f"今日掃描完成，{success_count} 檔分析成功，目前沒有符合 A1/A2 條件的個股。",
+            "status":     "ok",   # 掃描本身成功,只是今天沒有 A 級
+            "message":    f"今日掃描完成,{success_count} 檔分析成功,目前沒有符合 A1/A2 條件的個股。",
             "summary":    summarize(pd.DataFrame(), pool_total, success_count, failed_count),
             "learning":   learning,
             "results":    [],
@@ -877,7 +870,7 @@ def run_scan(max_workers: int = 12) -> dict:
 
     df = pd.DataFrame(rows)
 
-    # A1 優先，同級內按加分高低排序
+    # A1 優先,同級內按加分高低排序
     grade_rank = {"A1": 0, "A2": 1}
     df["grade_rank"] = df["grade"].map(grade_rank).fillna(9)
     df = df.sort_values(
