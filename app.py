@@ -23,6 +23,7 @@ from data_loader import (
     load_fundamental,
 )
 from indicators import add_indicators
+from ai_chat import render_chat_section  # 🆕 AI 分析助手
 
 DATA_DIR      = "data"
 LATEST_JSON   = os.path.join(DATA_DIR, "latest_scan.json")
@@ -872,7 +873,7 @@ def render_technical_analysis(df: pd.DataFrame, row_data: Dict[str, Any],
     }
 
 # =========================================================
-# 基本面渲染
+# 基本面渲染 — 🆕 改為回傳 fund dict 以供 AI 使用
 # =========================================================
 
 def _is_empty_fund(f):
@@ -939,7 +940,7 @@ def render_fundamental(stock_id: str, market_type: Optional[str]):
         if errors:
             with st.expander("技術細節"):
                 for e in errors: st.code(e)
-        return
+        return None  # 🆕 回傳 None
 
     fc1, fc2, fc3, fc4, fc5 = st.columns(5)
     fc1.metric("殖利率 %",  fmt_num(fund.get("yield"), 2))
@@ -977,6 +978,28 @@ def render_fundamental(stock_id: str, market_type: Optional[str]):
     note = fund.get("source_note", "")
     if note:
         st.caption(f"資料來源:{note}")
+
+    return fund  # 🆕 回傳 fund dict 供 AI 使用
+
+# =========================================================
+# 🆕 AI 聊天區整合輔助 — 把 row_data 整理成 signals_info
+# =========================================================
+
+def _build_signals_info(row_data: Dict[str, Any]) -> Dict[str, Any]:
+    grade = str(row_data.get("grade", "-"))
+    info = {
+        "grade": grade,
+        "score": safe_int(row_data.get("score", 0)),
+        "A1_triggered": grade == "A1",
+        "A2_triggered": grade == "A2",
+        "vol_ratio": safe_float(row_data.get("vol_ratio")),
+        "reasons": str(row_data.get("reasons", "")),
+    }
+    # 把所有 cond_a1_* / cond_a2_* 條件帶進去（如果有）
+    for k, v in row_data.items():
+        if isinstance(k, str) and k.startswith("cond_"):
+            info[k] = v
+    return info
 
 # =========================================================
 # Session state — 預設值:最低成交量 0
@@ -1268,11 +1291,21 @@ elif page_mode == "單筆個股分析":
                 render_result = render_technical_analysis(sdf, row_data, market)
 
             with tab2:
-                render_fundamental(code, market_type)
+                fund_data = render_fundamental(code, market_type)  # 🆕 接收回傳值
 
             with tab3:
                 prices = render_result["prices"] if render_result else {}
                 safe_render_chart(sdf, prices, f"{code} {name}")
+
+            # 🆕 ── AI 分析助手 ─────────────────────────────
+            render_chat_section(
+                symbol=code,
+                name=name,
+                df=sdf,
+                signals_info=_build_signals_info(row_data),
+                fundamentals=fund_data,
+                market_regime=f"{market.get('regime', '未知')} — {market.get('reason', '')}",
+            )
 
 # ── 掃描個股圖表 ──────────────────────────────────────
 
@@ -1316,7 +1349,7 @@ elif page_mode == "掃描個股圖表":
                 render_result = render_technical_analysis(cdf, row_data, market)
 
             with tab2:
-                render_fundamental(str(row.get("code", "")), market_type)
+                fund_data = render_fundamental(str(row.get("code", "")), market_type)  # 🆕
 
             with tab3:
                 prices = render_result["prices"] if render_result else {}
@@ -1324,6 +1357,16 @@ elif page_mode == "掃描個股圖表":
                     cdf, prices,
                     f"{row['code']} {row.get('name', '')}",
                 )
+
+            # 🆕 ── AI 分析助手 ─────────────────────────────
+            render_chat_section(
+                symbol=str(row.get("code", "")),
+                name=str(row.get("name", "")),
+                df=cdf,
+                signals_info=_build_signals_info(row_data),
+                fundamentals=fund_data,
+                market_regime=f"{market.get('regime', '未知')} — {market.get('reason', '')}",
+            )
 
 # ── AI 學習 ────────────────────────────────────────────
 
