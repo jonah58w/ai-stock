@@ -1,6 +1,5 @@
-
 """
-AI Chat 模組 — 為每檔股票提供即時對話分析（透過 OpenRouter）。
+AI Chat module - per-stock conversational analysis via OpenRouter.
 """
 
 from __future__ import annotations
@@ -22,9 +21,6 @@ except ImportError:
     requests = None
 
 
-# ---------------------------------------------------------------------------
-# 模型清單
-# ---------------------------------------------------------------------------
 MODEL_CATALOG: Dict[str, Dict[str, Any]] = {
     "DeepSeek V3 (推薦・繁中強・便宜)": {
         "id": "deepseek/deepseek-chat",
@@ -58,9 +54,6 @@ MODEL_CATALOG: Dict[str, Dict[str, Any]] = {
 DEFAULT_MODEL_LABEL = "DeepSeek V3 (推薦・繁中強・便宜)"
 
 
-# ---------------------------------------------------------------------------
-# 防禦式輔助函式
-# ---------------------------------------------------------------------------
 def _safe_float(x: Any, default: float = float("nan")) -> float:
     try:
         if x is None or pd.isna(x):
@@ -80,9 +73,6 @@ def _col(df: pd.DataFrame, *candidates: str) -> Optional[str]:
     return None
 
 
-# ---------------------------------------------------------------------------
-# 上下文打包
-# ---------------------------------------------------------------------------
 def _summarize_recent_ohlcv(df: pd.DataFrame, n: int = 20) -> str:
     if df is None or df.empty:
         return "(無價格資料)"
@@ -122,8 +112,8 @@ def _summarize_indicators(df: pd.DataFrame) -> str:
         ("MACD", ["MACD"]),
         ("MACD_signal", ["MACD_signal", "signal"]),
         ("MACD_hist", ["MACD_hist", "hist", "histogram"]),
-        ("K", ["K", "kd_k", "%K"]),
-        ("D", ["D", "kd_d", "%D"]),
+        ("K", ["K", "kd_k"]),
+        ("D", ["D", "kd_d"]),
         ("BB上軌", ["BB_upper", "boll_upper", "upper"]),
         ("BB下軌", ["BB_lower", "boll_lower", "lower"]),
     ]:
@@ -142,10 +132,10 @@ def _summarize_signals(signals_info: Optional[Dict[str, Any]]) -> str:
     parts = []
     for k, v in signals_info.items():
         if isinstance(v, bool):
-            parts.append(f"{k}: {'✅ 觸發中' if v else '❌ 未觸發'}")
+            parts.append(f"{k}: {'觸發中' if v else '未觸發'}")
         elif isinstance(v, dict):
             t = v.get("triggered", v.get("active", False))
-            parts.append(f"{k}: {'✅' if t else '❌'}")
+            parts.append(f"{k}: {'是' if t else '否'}")
         elif v is not None:
             parts.append(f"{k}: {v}")
     return "; ".join(parts) if parts else "(無訊號)"
@@ -241,17 +231,14 @@ def _build_context_block(
 """.strip()
 
 
-# ---------------------------------------------------------------------------
-# System prompt
-# ---------------------------------------------------------------------------
 SYSTEM_PROMPT_TEMPLATE = """你是一位資深台股技術分析師,專精台灣上市櫃股票的多空研判。
 你的對話風格務實、簡潔、有觀點,不講廢話、不打官腔。
 
 回答原則:
-1. 一律使用**繁體中文**回答(台灣用語:壓力位、支撐位、主力、籌碼、量價、跳空、突破、回測 等)
-2. **嚴格依據下方提供的真實資料**做分析,不可虛構數字、不可虛構新聞
+1. 一律使用繁體中文回答(台灣用語:壓力位、支撐位、主力、籌碼、量價、跳空、突破、回測 等)
+2. 嚴格依據下方提供的真實資料做分析,不可虛構數字、不可虛構新聞
 3. 資料不足以下定論時,明說「資料不足」,不要硬掰
-4. 講多空時,給出**關鍵價位**(如「站上 XX 元才確認突破」、「跌破 YY 元轉空」)
+4. 講多空時,給出關鍵價位(如「站上 XX 元才確認突破」、「跌破 YY 元轉空」)
 5. 不用建議式語言(「我建議買進」),改用分析式(「技術面偏多,但需注意 XX」)
 6. 風險提醒一次就好,不要每次都加免責聲明
 7. 預設回覆 150~400 字;使用者要求展開時再詳述
@@ -263,9 +250,127 @@ SYSTEM_PROMPT_TEMPLATE = """你是一位資深台股技術分析師,專精台灣
 """.strip()
 
 
-# ---------------------------------------------------------------------------
-# OpenRouter client
-# ---------------------------------------------------------------------------
 def _get_client():
     if OpenAI is None:
-        st.error("❌ 缺少 `openai` 套件。請在 requireme
+        st.error("缺少 openai 套件。請在 requirements.txt 加入 openai>=1.40.0")
+        return None
+    api_key = st.secrets.get("OPENROUTER_API_KEY", "")
+    if not api_key:
+        st.warning("尚未設定 OPENROUTER_API_KEY (Streamlit Secrets)。")
+        return None
+    return OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+        default_headers={
+            "HTTP-Referer": "https://github.com/jonah58w/ai-stock",
+            "X-Title": "Taiwan AI Stock Scanner",
+        },
+    )
+
+
+def _call_llm(client, model_id: str, messages: List[Dict[str, str]]) -> str:
+    try:
+        resp = client.chat.completions.create(
+            model=model_id,
+            messages=messages,
+            temperature=0.4,
+            max_tokens=1200,
+        )
+        return resp.choices[0].message.content or "(模型未回傳內容)"
+    except Exception as e:
+        return f"API 呼叫失敗: {type(e).__name__}: {e}"
+
+
+def _hkey(symbol: str) -> str:
+    return f"ai_chat_history__{symbol}"
+
+
+def render_chat_section(
+    symbol: str,
+    name: str = "",
+    df: Optional[pd.DataFrame] = None,
+    signals_info: Optional[Dict[str, Any]] = None,
+    fundamentals: Optional[Dict[str, Any]] = None,
+    market_regime: Optional[str] = None,
+) -> None:
+    st.divider()
+    st.subheader("AI 分析助手")
+    st.caption(f"與 AI 即時討論 {symbol} {name}。AI 會引用上方所有真實資料作答。")
+
+    c1, c2, c3 = st.columns([4, 2, 1])
+    with c1:
+        labels = list(MODEL_CATALOG.keys())
+        cur = st.session_state.get("ai_chat_model", DEFAULT_MODEL_LABEL)
+        idx = labels.index(cur) if cur in labels else 0
+        model_label = st.selectbox(
+            "模型", labels, index=idx, key=f"model_sel_{symbol}",
+            help="不同模型強項不同。DeepSeek/Qwen 中文好且便宜;Claude/GPT 推理深;Hermes 免費版有速率限制。",
+        )
+        st.session_state["ai_chat_model"] = model_label
+    with c2:
+        include_news = st.checkbox(
+            "包含近期新聞", value=True, key=f"news_{symbol}",
+            help="透過 FinMind 擷取近 7 日新聞餵給 AI",
+        )
+    with c3:
+        if st.button("清空", key=f"clear_{symbol}", help="清空對話", use_container_width=True):
+            st.session_state[_hkey(symbol)] = []
+            st.rerun()
+
+    info = MODEL_CATALOG[model_label]
+    st.caption(f"input ${info['in_price']}/M tokens, output ${info['out_price']}/M tokens")
+
+    history: List[Dict[str, str]] = st.session_state.setdefault(_hkey(symbol), [])
+
+    st.markdown("**常用提問:**")
+    qcols = st.columns(4)
+    quicks = [
+        ("整體研判", f"幫我綜合判斷 {symbol} {name} 目前的多空狀況"),
+        ("關鍵價位", f"{symbol} 目前的支撐與壓力位在哪?"),
+        ("風險警訊", f"{symbol} 現在有哪些技術面或籌碼面的警訊?"),
+        ("短線展望", f"{symbol} 未來 1~2 週的可能走勢推演"),
+    ]
+    quick_pick = None
+    for i, (lbl, prm) in enumerate(quicks):
+        with qcols[i]:
+            if st.button(lbl, key=f"q_{symbol}_{i}", use_container_width=True):
+                quick_pick = prm
+
+    for msg in history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    user_input = st.chat_input(f"問 AI 關於 {symbol} 的任何問題...", key=f"in_{symbol}")
+    if quick_pick and not user_input:
+        user_input = quick_pick
+    if not user_input:
+        return
+
+    with st.chat_message("user"):
+        st.markdown(user_input)
+    history.append({"role": "user", "content": user_input})
+
+    context_block = _build_context_block(
+        symbol=symbol, name=name,
+        df=df if df is not None else pd.DataFrame(),
+        signals_info=signals_info,
+        fundamentals=fundamentals,
+        market_regime=market_regime,
+        include_news=include_news,
+    )
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(context_block=context_block)
+
+    messages = [{"role": "system", "content": system_prompt}] + history[-16:]
+
+    client = _get_client()
+    if client is None:
+        history.pop()
+        return
+
+    with st.chat_message("assistant"):
+        with st.spinner(f"{model_label.split(' (')[0]} 思考中..."):
+            reply = _call_llm(client, info["id"], messages)
+        st.markdown(reply)
+
+    history.append({"role": "assistant", "content": reply})
+    st.session_state[_hkey(symbol)] = history
