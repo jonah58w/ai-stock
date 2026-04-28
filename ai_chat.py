@@ -1,4 +1,4 @@
-# ai_chat.py
+
 """
 AI Chat 模組 — 為每檔股票提供即時對話分析（透過 OpenRouter）。
 """
