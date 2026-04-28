@@ -1241,15 +1241,19 @@ if page_mode == "最新結果":
 elif page_mode == "單筆個股分析":
     st.subheader("單筆個股分析")
     ci, cb = st.columns([3, 1])
-    with ci:
-        code_input = st.text_input(
-            "代號",
-            placeholder="例如:2330、6761",
-            label_visibility="collapsed",
-        )
-    with cb:
-        do_go = st.button("🔍 深度分析", use_container_width=True)
-
+with ci:
+    code_input = st.text_input(
+        "代號",
+        placeholder="例如:2330、6761",
+        label_visibility="collapsed",
+        key="single_stock_code_input",   # 🆕 加這行
+    )
+with cb:
+    do_go = st.button(
+        "🔍 深度分析",
+        use_container_width=True,
+        key="single_stock_analyze_btn",  # 🆕 加這行
+    )
     code = code_input.strip()
     if not code:
         st.info("請輸入股票代號後按「深度分析」按鈕。")
