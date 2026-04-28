@@ -1241,19 +1241,20 @@ if page_mode == "最新結果":
 elif page_mode == "單筆個股分析":
     st.subheader("單筆個股分析")
     ci, cb = st.columns([3, 1])
-with ci:
-    code_input = st.text_input(
-        "代號",
-        placeholder="例如:2330、6761",
-        label_visibility="collapsed",
-        key="single_stock_code_input",   # 🆕 加這行
-    )
-with cb:
-    do_go = st.button(
-        "🔍 深度分析",
-        use_container_width=True,
-        key="single_stock_analyze_btn",  # 🆕 加這行
-    )
+    with ci:
+        code_input = st.text_input(
+            "代號",
+            placeholder="例如:2330、6761",
+            label_visibility="collapsed",
+            key="single_stock_code_input",
+        )
+    with cb:
+        do_go = st.button(
+            "🔍 深度分析",
+            use_container_width=True,
+            key="single_stock_analyze_btn",
+        )
+
     code = code_input.strip()
     if not code:
         st.info("請輸入股票代號後按「深度分析」按鈕。")
@@ -1295,13 +1296,13 @@ with cb:
                 render_result = render_technical_analysis(sdf, row_data, market)
 
             with tab2:
-                fund_data = render_fundamental(code, market_type)  # 🆕 接收回傳值
+                fund_data = render_fundamental(code, market_type)
 
             with tab3:
                 prices = render_result["prices"] if render_result else {}
                 safe_render_chart(sdf, prices, f"{code} {name}")
 
-            # 🆕 ── AI 分析助手 ─────────────────────────────
+            # ── AI 分析助手 ─────────────────────────────
             render_chat_section(
                 symbol=code,
                 name=name,
@@ -1310,7 +1311,6 @@ with cb:
                 fundamentals=fund_data,
                 market_regime=f"{market.get('regime', '未知')} — {market.get('reason', '')}",
             )
-
 # ── 掃描個股圖表 ──────────────────────────────────────
 
 elif page_mode == "掃描個股圖表":
