@@ -1353,7 +1353,7 @@ elif page_mode == "掃描個股圖表":
                 render_result = render_technical_analysis(cdf, row_data, market)
 
             with tab2:
-                fund_data = render_fundamental(str(row.get("code", "")), market_type)  # 🆕
+                fund_data = render_fundamental(str(row.get("code", "")), market_type)
 
             with tab3:
                 prices = render_result["prices"] if render_result else {}
@@ -1362,7 +1362,7 @@ elif page_mode == "掃描個股圖表":
                     f"{row['code']} {row.get('name', '')}",
                 )
 
-            # 🆕 ── AI 分析助手 ─────────────────────────────
+            # ── AI 分析助手 ─────────────────────────────
             render_chat_section(
                 symbol=str(row.get("code", "")),
                 name=str(row.get("name", "")),
