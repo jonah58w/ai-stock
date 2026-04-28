@@ -1,11 +1,12 @@
 """
 AI Chat module - per-stock conversational analysis via OpenRouter.
+v2: streaming output, faster model defaults, lazy news fetch.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Iterator
 
 import pandas as pd
 import streamlit as st
@@ -21,37 +22,38 @@ except ImportError:
     requests = None
 
 
+# Models ordered by speed (fastest first).
 MODEL_CATALOG: Dict[str, Dict[str, Any]] = {
-    "DeepSeek V3 (推薦・繁中強・便宜)": {
-        "id": "deepseek/deepseek-chat",
-        "in_price": 0.27, "out_price": 1.10,
-    },
-    "Qwen 2.5 72B (台股術語熟)": {
-        "id": "qwen/qwen-2.5-72b-instruct",
-        "in_price": 0.35, "out_price": 0.40,
-    },
-    "Hermes 4 70B (Nous Research)": {
-        "id": "nousresearch/hermes-4-70b",
-        "in_price": 0.13, "out_price": 0.40,
-    },
-    "Hermes 3 405B (免費・有速率限制)": {
-        "id": "nousresearch/hermes-3-llama-3.1-405b:free",
-        "in_price": 0.0, "out_price": 0.0,
-    },
-    "Claude Haiku 4.5 (繁中極佳)": {
-        "id": "anthropic/claude-haiku-4.5",
-        "in_price": 1.0, "out_price": 5.0,
-    },
-    "GPT-4o mini (OpenAI)": {
-        "id": "openai/gpt-4o-mini",
-        "in_price": 0.15, "out_price": 0.60,
-    },
-    "Gemini 2.5 Flash (Google)": {
+    "Gemini 2.5 Flash (最快・繁中佳)": {
         "id": "google/gemini-2.5-flash",
         "in_price": 0.30, "out_price": 2.50,
     },
+    "GPT-4o mini (快・OpenAI)": {
+        "id": "openai/gpt-4o-mini",
+        "in_price": 0.15, "out_price": 0.60,
+    },
+    "Claude Haiku 4.5 (快・繁中極佳)": {
+        "id": "anthropic/claude-haiku-4.5",
+        "in_price": 1.0, "out_price": 5.0,
+    },
+    "Qwen 2.5 72B (中速・台股術語熟)": {
+        "id": "qwen/qwen-2.5-72b-instruct",
+        "in_price": 0.35, "out_price": 0.40,
+    },
+    "DeepSeek V3 (慢・繁中強・便宜)": {
+        "id": "deepseek/deepseek-chat",
+        "in_price": 0.27, "out_price": 1.10,
+    },
+    "Hermes 4 70B (中速・Nous Research)": {
+        "id": "nousresearch/hermes-4-70b",
+        "in_price": 0.13, "out_price": 0.40,
+    },
+    "Hermes 3 405B (免費・很慢・限速)": {
+        "id": "nousresearch/hermes-3-llama-3.1-405b:free",
+        "in_price": 0.0, "out_price": 0.0,
+    },
 }
-DEFAULT_MODEL_LABEL = "DeepSeek V3 (推薦・繁中強・便宜)"
+DEFAULT_MODEL_LABEL = "Gemini 2.5 Flash (最快・繁中佳)"
 
 
 def _safe_float(x: Any, default: float = float("nan")) -> float:
@@ -165,7 +167,7 @@ def _summarize_fundamentals(fund: Optional[Dict[str, Any]]) -> str:
     return "; ".join(parts) if parts else "(無基本面)"
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def _fetch_recent_news(symbol: str, days: int = 7) -> str:
     if requests is None:
         return "(requests 套件不可用)"
@@ -183,7 +185,7 @@ def _fetch_recent_news(symbol: str, days: int = 7) -> str:
                 "start_date": start, "end_date": end,
                 "token": token,
             },
-            timeout=10,
+            timeout=8,
         )
         if r.status_code != 200:
             return f"(FinMind {r.status_code})"
@@ -207,7 +209,7 @@ def _build_context_block(
     include_news: bool,
 ) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
-    news_block = _fetch_recent_news(symbol) if include_news else "(本次未擷取)"
+    news_block = _fetch_recent_news(symbol) if include_news else "(本次未啟用新聞)"
     return f"""
 === 個股資料快照 ({today}) ===
 
@@ -268,17 +270,25 @@ def _get_client():
     )
 
 
-def _call_llm(client, model_id: str, messages: List[Dict[str, str]]) -> str:
+def _stream_llm(client, model_id: str, messages: List[Dict[str, str]]) -> Iterator[str]:
+    """Yield text chunks as they arrive."""
     try:
-        resp = client.chat.completions.create(
+        stream = client.chat.completions.create(
             model=model_id,
             messages=messages,
             temperature=0.4,
             max_tokens=1200,
+            stream=True,
         )
-        return resp.choices[0].message.content or "(模型未回傳內容)"
+        for chunk in stream:
+            try:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+            except (AttributeError, IndexError):
+                continue
     except Exception as e:
-        return f"API 呼叫失敗: {type(e).__name__}: {e}"
+        yield f"\n\nAPI 呼叫失敗: {type(e).__name__}: {e}"
 
 
 def _hkey(symbol: str) -> str:
@@ -303,14 +313,14 @@ def render_chat_section(
         cur = st.session_state.get("ai_chat_model", DEFAULT_MODEL_LABEL)
         idx = labels.index(cur) if cur in labels else 0
         model_label = st.selectbox(
-            "模型", labels, index=idx, key=f"model_sel_{symbol}",
-            help="不同模型強項不同。DeepSeek/Qwen 中文好且便宜;Claude/GPT 推理深;Hermes 免費版有速率限制。",
+            "模型 (清單依速度排序)", labels, index=idx, key=f"model_sel_{symbol}",
+            help="想要快選最上面;想省錢用最下面;繁中最強推 Claude Haiku 或 DeepSeek。",
         )
         st.session_state["ai_chat_model"] = model_label
     with c2:
         include_news = st.checkbox(
-            "包含近期新聞", value=True, key=f"news_{symbol}",
-            help="透過 FinMind 擷取近 7 日新聞餵給 AI",
+            "包含近期新聞 (慢 5~8 秒)", value=False, key=f"news_{symbol}",
+            help="打勾後 AI 會看到近 7 日新聞,但會多花 5~8 秒抓資料",
         )
     with c3:
         if st.button("清空", key=f"clear_{symbol}", help="清空對話", use_container_width=True):
@@ -367,10 +377,12 @@ def render_chat_section(
         history.pop()
         return
 
+    # Streaming: characters appear as they arrive.
     with st.chat_message("assistant"):
-        with st.spinner(f"{model_label.split(' (')[0]} 思考中..."):
-            reply = _call_llm(client, info["id"], messages)
-        st.markdown(reply)
+        full_reply = st.write_stream(_stream_llm(client, info["id"], messages))
 
-    history.append({"role": "assistant", "content": reply})
+    if isinstance(full_reply, str) and full_reply.strip():
+        history.append({"role": "assistant", "content": full_reply})
+    else:
+        history.append({"role": "assistant", "content": "(模型未回傳內容)"})
     st.session_state[_hkey(symbol)] = history
