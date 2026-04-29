@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-04-28 10:07:04",
+  "updated_at": "2026-04-29 10:00:12",
   "weights": {
     "ma60_slope_up": 15,
     "vol_ratio_2x": 10,
@@ -25,9 +25,31 @@
     "b_score_min": 42
   },
   "rule_stats": {
-    "total_labeled": 0,
-    "success_rate_5d": 0.0,
-    "by_condition": {},
-    "combo_stats": {}
+    "total_labeled": 1701,
+    "success_rate_5d": 12.29,
+    "by_condition": {
+      "vol_ratio_2x": {
+        "samples": 7,
+        "success_rate_5d": 0.0,
+        "avg_ret_5d": -5.18
+      },
+      "ma60_slope_up": {
+        "samples": 15,
+        "success_rate_5d": 0.0,
+        "avg_ret_5d": -3.01
+      }
+    },
+    "grade_stats": {
+      "A1": {
+        "samples": 7,
+        "success_rate_5d": 0.0,
+        "avg_ret_5d": -5.18
+      },
+      "A2": {
+        "samples": 33,
+        "success_rate_5d": 3.03,
+        "avg_ret_5d": -3.76
+      }
+    }
   }
 }
