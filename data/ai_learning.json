@@ -1,8 +1,8 @@
 {
-  "updated_at": "2026-05-12 10:23:27",
+  "updated_at": "2026-05-13 10:20:07",
   "weights": {
     "ma60_slope_up": 9,
-    "vol_ratio_2x": 10,
+    "vol_ratio_2x": 6,
     "rsi_healthy": 8,
     "boll_expanding": 8,
     "weekly_above_ma20": 12,
@@ -19,36 +19,36 @@
   "thresholds": {
     "vol_ratio_min": 1.2,
     "pullback_pct": 0.02,
-    "bonus_score_min": 15,
+    "bonus_score_min": 18,
     "success_return_5d": 3.0,
     "a_score_min": 72,
     "b_score_min": 42
   },
   "rule_stats": {
-    "total_labeled": 1776,
-    "success_rate_5d": 13.4,
+    "total_labeled": 1877,
+    "success_rate_5d": 14.44,
     "by_condition": {
       "vol_ratio_2x": {
-        "samples": 17,
-        "success_rate_5d": 17.65,
-        "avg_ret_5d": -1.59
+        "samples": 87,
+        "success_rate_5d": 26.44,
+        "avg_ret_5d": -0.49
       },
       "ma60_slope_up": {
-        "samples": 44,
-        "success_rate_5d": 22.73,
-        "avg_ret_5d": 0.62
+        "samples": 117,
+        "success_rate_5d": 26.5,
+        "avg_ret_5d": 0.2
       }
     },
     "grade_stats": {
       "A1": {
-        "samples": 14,
-        "success_rate_5d": 21.43,
-        "avg_ret_5d": -1.62
+        "samples": 84,
+        "success_rate_5d": 27.38,
+        "avg_ret_5d": -0.46
       },
       "A2": {
-        "samples": 101,
-        "success_rate_5d": 26.73,
-        "avg_ret_5d": 0.86
+        "samples": 132,
+        "success_rate_5d": 30.3,
+        "avg_ret_5d": 1.49
       }
     }
   }
