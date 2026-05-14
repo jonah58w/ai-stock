@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-05-13 10:20:07",
+  "updated_at": "2026-05-14 10:13:36",
   "weights": {
     "ma60_slope_up": 9,
     "vol_ratio_2x": 6,
@@ -19,36 +19,36 @@
   "thresholds": {
     "vol_ratio_min": 1.2,
     "pullback_pct": 0.02,
-    "bonus_score_min": 18,
+    "bonus_score_min": 21,
     "success_return_5d": 3.0,
     "a_score_min": 72,
     "b_score_min": 42
   },
   "rule_stats": {
-    "total_labeled": 1877,
-    "success_rate_5d": 14.44,
+    "total_labeled": 1897,
+    "success_rate_5d": 14.71,
     "by_condition": {
       "vol_ratio_2x": {
-        "samples": 87,
-        "success_rate_5d": 26.44,
-        "avg_ret_5d": -0.49
+        "samples": 104,
+        "success_rate_5d": 29.81,
+        "avg_ret_5d": 0.48
       },
       "ma60_slope_up": {
-        "samples": 117,
-        "success_rate_5d": 26.5,
-        "avg_ret_5d": 0.2
+        "samples": 134,
+        "success_rate_5d": 29.1,
+        "avg_ret_5d": 0.87
       }
     },
     "grade_stats": {
       "A1": {
-        "samples": 84,
-        "success_rate_5d": 27.38,
-        "avg_ret_5d": -0.46
+        "samples": 101,
+        "success_rate_5d": 30.69,
+        "avg_ret_5d": 0.53
       },
       "A2": {
-        "samples": 132,
-        "success_rate_5d": 30.3,
-        "avg_ret_5d": 1.49
+        "samples": 135,
+        "success_rate_5d": 29.63,
+        "avg_ret_5d": 1.34
       }
     }
   }
