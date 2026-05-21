@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-05-20 10:41:48",
+  "updated_at": "2026-05-21 10:58:10",
   "weights": {
     "ma60_slope_up": 9,
     "vol_ratio_2x": 6,
@@ -19,7 +19,7 @@
   "thresholds": {
     "vol_ratio_min": 1.2,
     "pullback_pct": 0.02,
-    "bonus_score_min": 33,
+    "bonus_score_min": 35,
     "success_return_5d": 3.0,
     "a_score_min": 72,
     "b_score_min": 42
