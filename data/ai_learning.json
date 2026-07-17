@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-07-16 09:55:35",
+  "updated_at": "2026-07-17 09:48:29",
   "weights": {
     "ma60_slope_up": 9,
     "vol_ratio_2x": 6,
@@ -25,30 +25,30 @@
     "b_score_min": 42
   },
   "rule_stats": {
-    "total_labeled": 2241,
-    "success_rate_5d": 16.87,
+    "total_labeled": 2270,
+    "success_rate_5d": 16.74,
     "by_condition": {
       "vol_ratio_2x": {
-        "samples": 253,
-        "success_rate_5d": 26.48,
-        "avg_ret_5d": -0.24
+        "samples": 257,
+        "success_rate_5d": 26.07,
+        "avg_ret_5d": -0.32
       },
       "ma60_slope_up": {
-        "samples": 315,
-        "success_rate_5d": 26.03,
-        "avg_ret_5d": 0.09
+        "samples": 323,
+        "success_rate_5d": 25.39,
+        "avg_ret_5d": -0.08
       }
     },
     "grade_stats": {
       "A1": {
-        "samples": 246,
-        "success_rate_5d": 27.24,
-        "avg_ret_5d": -0.15
+        "samples": 250,
+        "success_rate_5d": 26.8,
+        "avg_ret_5d": -0.23
       },
       "A2": {
-        "samples": 334,
-        "success_rate_5d": 30.84,
-        "avg_ret_5d": 0.93
+        "samples": 359,
+        "success_rate_5d": 29.25,
+        "avg_ret_5d": 0.6
       }
     }
   }
