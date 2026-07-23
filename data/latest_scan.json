@@ -1,17 +1,17 @@
 {
-  "updated_at": "2026-07-22 10:13:15",
+  "updated_at": "2026-07-23 10:18:41",
   "status": "ok",
   "message": "",
   "summary": {
     "pool_total": 1925,
     "success_count": 1312,
     "failed_count": 613,
-    "display_total": 3,
-    "A1_count": 2,
-    "A2_count": 1
+    "display_total": 7,
+    "A1_count": 1,
+    "A2_count": 6
   },
   "learning": {
-    "updated_at": "2026-07-22 10:13:15",
+    "updated_at": "2026-07-23 10:18:41",
     "weights": {
       "ma60_slope_up": 9,
       "vol_ratio_2x": 6,
@@ -37,83 +37,83 @@
       "b_score_min": 42
     },
     "rule_stats": {
-      "total_labeled": 2270,
-      "success_rate_5d": 16.74,
+      "total_labeled": 2285,
+      "success_rate_5d": 16.63,
       "by_condition": {
         "vol_ratio_2x": {
-          "samples": 257,
-          "success_rate_5d": 26.07,
-          "avg_ret_5d": -0.32
+          "samples": 261,
+          "success_rate_5d": 25.67,
+          "avg_ret_5d": -0.44
         },
         "ma60_slope_up": {
-          "samples": 323,
-          "success_rate_5d": 25.39,
-          "avg_ret_5d": -0.08
+          "samples": 329,
+          "success_rate_5d": 24.92,
+          "avg_ret_5d": -0.19
         }
       },
       "grade_stats": {
         "A1": {
-          "samples": 250,
-          "success_rate_5d": 26.8,
-          "avg_ret_5d": -0.23
+          "samples": 254,
+          "success_rate_5d": 26.38,
+          "avg_ret_5d": -0.35
         },
         "A2": {
-          "samples": 359,
-          "success_rate_5d": 29.25,
-          "avg_ret_5d": 0.6
+          "samples": 370,
+          "success_rate_5d": 28.38,
+          "avg_ret_5d": 0.49
         }
       }
     }
   },
   "results": [
     {
-      "scan_id": "2026-07-22_5490",
-      "scan_date": "2026-07-22",
-      "scan_time": "2026-07-22 10:12:41",
-      "data_date": "2026-07-22",
-      "code": "5490",
-      "name": "同亨",
+      "scan_id": "2026-07-23_4995",
+      "scan_date": "2026-07-23",
+      "scan_time": "2026-07-23 10:10:19",
+      "data_date": "2026-07-23",
+      "code": "4995",
+      "name": "晶達",
       "market": "上櫃",
       "type": "股票",
-      "symbol": "5490.TWO",
+      "symbol": "4995.TWO",
       "grade": "A1",
       "score": 35,
-      "reasons": "MA20向上、站上季線、MACD第1紅柱、MA5穿MA10、突破20日高點、量增1.5倍、收紅K、季線向上、均線多頭排列、MACD紅柱中、季線持續上揚(+9)、量比≥2倍(+6)、布林擴張(+8)、週線站上MA20(+12)",
-      "close": 33.45,
-      "open": 32.0,
-      "high": 34.15,
-      "low": 31.75,
-      "volume": 3661192,
-      "vol_ratio": 2.56,
-      "rsi14": 71.5,
-      "dif": 0.6016,
-      "dea": 0.3687,
-      "hist": 0.2329,
-      "ma5": 30.59,
-      "ma10": 30.32,
-      "ma20": 29.85,
-      "ma60": 29.01,
-      "bb_upper": 32.41,
-      "bb_mid": 29.85,
-      "bb_lower": 27.28,
-      "bb_width": 0.1721,
-      "aggressive_buy_price": 33.45,
-      "pullback_buy_price": 30.32,
-      "conservative_buy_price": 29.85,
-      "sell_price_1": 32.41,
-      "sell_price_2": 35.86,
-      "stop_loss_short": 30.32,
-      "stop_loss_wave": 29.85,
-      "stop_loss_hard": 29.01,
-      "support_1": 30.32,
-      "support_2": 29.85,
-      "support_3": 29.01,
-      "resistance_1": 32.41,
-      "resistance_2": 34.15,
-      "recent_low_20": 27.3,
-      "buy_note": "A1 突破進場｜積極 33.45、回踩 30.32、保守 29.85",
-      "stop_note": "短線停損 30.32、波段停損 29.85、嚴格停損 29.01",
-      "target_note": "第一賣點 32.41、第二賣點 35.86",
+      "reasons": "MA20向上、站上季線、MACD第1紅柱、MA5穿MA10、突破20日高點、量增1.5倍、收紅K、季線向上、均線多頭排列、MACD紅柱中、底部墊高、季線持續上揚(+9)、量比≥2倍(+6)、布林擴張(+8)、週線站上MA20(+12)",
+      "close": 50.3,
+      "open": 45.9,
+      "high": 50.3,
+      "low": 45.9,
+      "volume": 434293,
+      "vol_ratio": 3.46,
+      "rsi14": 77.3,
+      "dif": 0.4908,
+      "dea": 0.2159,
+      "hist": 0.2749,
+      "ma5": 46.45,
+      "ma10": 46.3,
+      "ma20": 45.7,
+      "ma60": 45.42,
+      "bb_upper": 48.08,
+      "bb_mid": 45.7,
+      "bb_lower": 43.32,
+      "bb_width": 0.1041,
+      "aggressive_buy_price": 50.3,
+      "pullback_buy_price": 46.3,
+      "conservative_buy_price": 45.7,
+      "sell_price_1": 48.08,
+      "sell_price_2": 52.81,
+      "stop_loss_short": 46.3,
+      "stop_loss_wave": 45.7,
+      "stop_loss_hard": 45.42,
+      "support_1": 46.3,
+      "support_2": 45.7,
+      "support_3": 45.42,
+      "resistance_1": 48.08,
+      "resistance_2": 50.3,
+      "recent_low_20": 44.0,
+      "buy_note": "A1 突破進場｜積極 50.30、回踩 46.30、保守 45.70",
+      "stop_note": "短線停損 46.30、波段停損 45.70、嚴格停損 45.42",
+      "target_note": "第一賣點 48.08、第二賣點 52.81",
       "cond_a1_ma20_up": 1,
       "cond_a1_above_ma60": 1,
       "cond_a1_macd_first_red": 1,
@@ -126,126 +126,390 @@
       "cond_a2_pullback_to_ma": 0,
       "cond_a2_macd_positive": 1,
       "cond_a2_vol_shrink": 0,
-      "cond_a2_higher_lows": 0,
+      "cond_a2_higher_lows": 1,
       "ret_3d": NaN,
       "ret_5d": NaN,
       "ret_10d": NaN,
       "success_5d": NaN
     },
     {
-      "scan_id": "2026-07-22_2395",
-      "scan_date": "2026-07-22",
-      "scan_time": "2026-07-22 10:12:13",
-      "data_date": "2026-07-22",
-      "code": "2395",
-      "name": "研華",
+      "scan_id": "2026-07-23_2850",
+      "scan_date": "2026-07-23",
+      "scan_time": "2026-07-23 10:10:00",
+      "data_date": "2026-07-23",
+      "code": "2850",
+      "name": "新產",
       "market": "上市",
       "type": "股票",
-      "symbol": "2395.TW",
-      "grade": "A1",
-      "score": 35,
-      "reasons": "MA20向上、站上季線、MACD第1紅柱、MA5穿MA10、突破20日高點、量增1.5倍、收紅K、季線向上、均線多頭排列、MACD紅柱中、季線持續上揚(+9)、量比≥2倍(+6)、布林擴張(+8)、週線站上MA20(+12)",
-      "close": 596.0,
-      "open": 589.0,
-      "high": 618.0,
-      "low": 584.0,
-      "volume": 9482256,
-      "vol_ratio": 2.14,
-      "rsi14": 70.6,
-      "dif": 19.4362,
-      "dea": 15.1567,
-      "hist": 4.2795,
-      "ma5": 544.4,
-      "ma10": 540.0,
-      "ma20": 519.58,
-      "ma60": 485.35,
-      "bb_upper": 582.66,
-      "bb_mid": 519.58,
-      "bb_lower": 456.49,
-      "bb_width": 0.2428,
-      "aggressive_buy_price": 596.0,
-      "pullback_buy_price": 540.0,
-      "conservative_buy_price": 519.58,
-      "sell_price_1": 582.66,
-      "sell_price_2": 648.9,
-      "stop_loss_short": 540.0,
-      "stop_loss_wave": 519.58,
-      "stop_loss_hard": 485.35,
-      "support_1": 540.0,
-      "support_2": 519.58,
-      "support_3": 485.35,
-      "resistance_1": 582.66,
-      "resistance_2": 618.0,
-      "recent_low_20": 453.0,
-      "buy_note": "A1 突破進場｜積極 596.00、回踩 540.00、保守 519.58",
-      "stop_note": "短線停損 540.00、波段停損 519.58、嚴格停損 485.35",
-      "target_note": "第一賣點 582.66、第二賣點 648.90",
-      "cond_a1_ma20_up": 1,
-      "cond_a1_above_ma60": 1,
-      "cond_a1_macd_first_red": 1,
-      "cond_a1_ma5_cross_ma10": 1,
-      "cond_a1_breakout_20d": 1,
-      "cond_a1_vol_expand": 1,
-      "cond_a1_red_candle": 1,
-      "cond_a2_ma60_up": 1,
-      "cond_a2_bullish_alignment": 1,
-      "cond_a2_pullback_to_ma": 0,
-      "cond_a2_macd_positive": 1,
-      "cond_a2_vol_shrink": 0,
-      "cond_a2_higher_lows": 0,
-      "ret_3d": NaN,
-      "ret_5d": NaN,
-      "ret_10d": NaN,
-      "success_5d": NaN
-    },
-    {
-      "scan_id": "2026-07-22_2923",
-      "scan_date": "2026-07-22",
-      "scan_time": "2026-07-22 10:12:20",
-      "data_date": "2026-07-22",
-      "code": "2923",
-      "name": "鼎固-KY",
-      "market": "上市",
-      "type": "股票",
-      "symbol": "2923.TW",
+      "symbol": "2850.TW",
       "grade": "A2",
       "score": 37,
-      "reasons": "MA20向上、站上季線、季線向上、均線多頭排列、回踩均線、MACD紅柱中、縮量回踩、底部墊高、季線持續上揚(+9)、RSI健康區(66.7)(+8)、布林擴張(+8)、週線站上MA20(+12)",
-      "close": 32.3,
-      "open": 34.0,
-      "high": 34.05,
-      "low": 31.95,
-      "volume": 164859,
-      "vol_ratio": 0.52,
-      "rsi14": 66.7,
-      "dif": 2.6326,
-      "dea": 2.1098,
-      "hist": 0.5228,
-      "ma5": 35.13,
-      "ma10": 32.38,
-      "ma20": 29.48,
-      "ma60": 25.69,
-      "bb_upper": 37.28,
-      "bb_mid": 29.48,
-      "bb_lower": 21.69,
-      "bb_width": 0.5288,
-      "aggressive_buy_price": 32.38,
-      "pullback_buy_price": 29.48,
-      "conservative_buy_price": 25.69,
-      "sell_price_1": 37.28,
-      "sell_price_2": 40.43,
-      "stop_loss_short": 29.48,
-      "stop_loss_wave": 25.69,
-      "stop_loss_hard": 25.69,
-      "support_1": 32.38,
-      "support_2": 29.48,
-      "support_3": 25.69,
-      "resistance_1": 37.28,
-      "resistance_2": 38.5,
-      "recent_low_20": 23.6,
-      "buy_note": "A2 回踩買點｜積極 32.38、回踩 29.48、保守 25.69",
-      "stop_note": "短線停損 29.48、波段停損 25.69、嚴格停損 25.69",
-      "target_note": "第一賣點 37.28、第二賣點 40.43",
+      "reasons": "MA20向上、站上季線、季線向上、均線多頭排列、回踩均線、MACD紅柱中、縮量回踩、底部墊高、季線持續上揚(+9)、RSI健康區(58.5)(+8)、布林擴張(+8)、週線站上MA20(+12)",
+      "close": 147.0,
+      "open": 148.0,
+      "high": 149.0,
+      "low": 145.5,
+      "volume": 157516,
+      "vol_ratio": 0.74,
+      "rsi14": 58.5,
+      "dif": 1.4265,
+      "dea": 1.3816,
+      "hist": 0.0449,
+      "ma5": 146.7,
+      "ma10": 146.35,
+      "ma20": 144.75,
+      "ma60": 141.09,
+      "bb_upper": 149.87,
+      "bb_mid": 144.75,
+      "bb_lower": 139.63,
+      "bb_width": 0.0708,
+      "aggressive_buy_price": 146.35,
+      "pullback_buy_price": 144.75,
+      "conservative_buy_price": 141.09,
+      "sell_price_1": 149.87,
+      "sell_price_2": 158.55,
+      "stop_loss_short": 144.75,
+      "stop_loss_wave": 141.09,
+      "stop_loss_hard": 141.09,
+      "support_1": 146.35,
+      "support_2": 144.75,
+      "support_3": 141.09,
+      "resistance_1": 149.87,
+      "resistance_2": 151.0,
+      "recent_low_20": 139.5,
+      "buy_note": "A2 回踩買點｜積極 146.35、回踩 144.75、保守 141.09",
+      "stop_note": "短線停損 144.75、波段停損 141.09、嚴格停損 141.09",
+      "target_note": "第一賣點 149.87、第二賣點 158.55",
+      "cond_a1_ma20_up": 1,
+      "cond_a1_above_ma60": 1,
+      "cond_a1_macd_first_red": 0,
+      "cond_a1_ma5_cross_ma10": 0,
+      "cond_a1_breakout_20d": 0,
+      "cond_a1_vol_expand": 0,
+      "cond_a1_red_candle": 0,
+      "cond_a2_ma60_up": 1,
+      "cond_a2_bullish_alignment": 1,
+      "cond_a2_pullback_to_ma": 1,
+      "cond_a2_macd_positive": 1,
+      "cond_a2_vol_shrink": 1,
+      "cond_a2_higher_lows": 1,
+      "ret_3d": NaN,
+      "ret_5d": NaN,
+      "ret_10d": NaN,
+      "success_5d": NaN
+    },
+    {
+      "scan_id": "2026-07-23_2762",
+      "scan_date": "2026-07-23",
+      "scan_time": "2026-07-23 10:10:00",
+      "data_date": "2026-07-23",
+      "code": "2762",
+      "name": "世界健身-KY",
+      "market": "上市",
+      "type": "股票",
+      "symbol": "2762.TW",
+      "grade": "A2",
+      "score": 37,
+      "reasons": "MA20向上、站上季線、突破20日高點、季線向上、均線多頭排列、回踩均線、MACD紅柱中、縮量回踩、底部墊高、季線持續上揚(+9)、RSI健康區(53.7)(+8)、布林擴張(+8)、週線站上MA20(+12)",
+      "close": 84.2,
+      "open": 85.2,
+      "high": 85.2,
+      "low": 83.9,
+      "volume": 47936,
+      "vol_ratio": 0.71,
+      "rsi14": 53.7,
+      "dif": 0.4618,
+      "dea": 0.2288,
+      "hist": 0.2329,
+      "ma5": 85.1,
+      "ma10": 84.2,
+      "ma20": 83.23,
+      "ma60": 82.53,
+      "bb_upper": 86.51,
+      "bb_mid": 83.23,
+      "bb_lower": 79.96,
+      "bb_width": 0.0786,
+      "aggressive_buy_price": 84.2,
+      "pullback_buy_price": 83.23,
+      "conservative_buy_price": 82.53,
+      "sell_price_1": 86.51,
+      "sell_price_2": 91.67,
+      "stop_loss_short": 83.23,
+      "stop_loss_wave": 82.53,
+      "stop_loss_hard": 82.53,
+      "support_1": 84.2,
+      "support_2": 83.23,
+      "support_3": 82.53,
+      "resistance_1": 86.51,
+      "resistance_2": 87.3,
+      "recent_low_20": 80.6,
+      "buy_note": "A2 回踩買點｜積極 84.20、回踩 83.23、保守 82.53",
+      "stop_note": "短線停損 83.23、波段停損 82.53、嚴格停損 82.53",
+      "target_note": "第一賣點 86.51、第二賣點 91.67",
+      "cond_a1_ma20_up": 1,
+      "cond_a1_above_ma60": 1,
+      "cond_a1_macd_first_red": 0,
+      "cond_a1_ma5_cross_ma10": 0,
+      "cond_a1_breakout_20d": 1,
+      "cond_a1_vol_expand": 0,
+      "cond_a1_red_candle": 0,
+      "cond_a2_ma60_up": 1,
+      "cond_a2_bullish_alignment": 1,
+      "cond_a2_pullback_to_ma": 1,
+      "cond_a2_macd_positive": 1,
+      "cond_a2_vol_shrink": 1,
+      "cond_a2_higher_lows": 1,
+      "ret_3d": NaN,
+      "ret_5d": NaN,
+      "ret_10d": NaN,
+      "success_5d": NaN
+    },
+    {
+      "scan_id": "2026-07-23_3029",
+      "scan_date": "2026-07-23",
+      "scan_time": "2026-07-23 10:10:03",
+      "data_date": "2026-07-23",
+      "code": "3029",
+      "name": "零壹",
+      "market": "上市",
+      "type": "股票",
+      "symbol": "3029.TW",
+      "grade": "A2",
+      "score": 37,
+      "reasons": "MA20向上、站上季線、突破20日高點、季線向上、均線多頭排列、回踩均線、MACD紅柱中、縮量回踩、底部墊高、季線持續上揚(+9)、RSI健康區(54.5)(+8)、布林擴張(+8)、週線站上MA20(+12)",
+      "close": 104.0,
+      "open": 104.0,
+      "high": 105.0,
+      "low": 102.5,
+      "volume": 642969,
+      "vol_ratio": 0.49,
+      "rsi14": 54.5,
+      "dif": 0.816,
+      "dea": 0.5862,
+      "hist": 0.2298,
+      "ma5": 104.2,
+      "ma10": 103.5,
+      "ma20": 102.25,
+      "ma60": 101.22,
+      "bb_upper": 107.16,
+      "bb_mid": 102.25,
+      "bb_lower": 97.33,
+      "bb_width": 0.0962,
+      "aggressive_buy_price": 103.5,
+      "pullback_buy_price": 102.25,
+      "conservative_buy_price": 101.22,
+      "sell_price_1": 107.16,
+      "sell_price_2": 113.4,
+      "stop_loss_short": 102.25,
+      "stop_loss_wave": 101.22,
+      "stop_loss_hard": 101.22,
+      "support_1": 103.5,
+      "support_2": 102.25,
+      "support_3": 101.22,
+      "resistance_1": 107.16,
+      "resistance_2": 108.0,
+      "recent_low_20": 95.6,
+      "buy_note": "A2 回踩買點｜積極 103.50、回踩 102.25、保守 101.22",
+      "stop_note": "短線停損 102.25、波段停損 101.22、嚴格停損 101.22",
+      "target_note": "第一賣點 107.16、第二賣點 113.40",
+      "cond_a1_ma20_up": 1,
+      "cond_a1_above_ma60": 1,
+      "cond_a1_macd_first_red": 0,
+      "cond_a1_ma5_cross_ma10": 0,
+      "cond_a1_breakout_20d": 1,
+      "cond_a1_vol_expand": 0,
+      "cond_a1_red_candle": 0,
+      "cond_a2_ma60_up": 1,
+      "cond_a2_bullish_alignment": 1,
+      "cond_a2_pullback_to_ma": 1,
+      "cond_a2_macd_positive": 1,
+      "cond_a2_vol_shrink": 1,
+      "cond_a2_higher_lows": 1,
+      "ret_3d": NaN,
+      "ret_5d": NaN,
+      "ret_10d": NaN,
+      "success_5d": NaN
+    },
+    {
+      "scan_id": "2026-07-23_2704",
+      "scan_date": "2026-07-23",
+      "scan_time": "2026-07-23 10:09:59",
+      "data_date": "2026-07-23",
+      "code": "2704",
+      "name": "國賓",
+      "market": "上市",
+      "type": "股票",
+      "symbol": "2704.TW",
+      "grade": "A2",
+      "score": 37,
+      "reasons": "MA20向上、站上季線、MACD第1紅柱、突破20日高點、季線向上、均線多頭排列、回踩均線、MACD紅柱中、縮量回踩、底部墊高、季線持續上揚(+9)、RSI健康區(61.0)(+8)、布林擴張(+8)、週線站上MA20(+12)",
+      "close": 45.8,
+      "open": 45.8,
+      "high": 45.8,
+      "low": 45.2,
+      "volume": 61598,
+      "vol_ratio": 0.43,
+      "rsi14": 61.0,
+      "dif": 0.5481,
+      "dea": 0.5352,
+      "hist": 0.0129,
+      "ma5": 45.9,
+      "ma10": 45.75,
+      "ma20": 45.15,
+      "ma60": 43.67,
+      "bb_upper": 46.65,
+      "bb_mid": 45.15,
+      "bb_lower": 43.66,
+      "bb_width": 0.0662,
+      "aggressive_buy_price": 45.75,
+      "pullback_buy_price": 45.15,
+      "conservative_buy_price": 43.67,
+      "sell_price_1": 46.65,
+      "sell_price_2": 50.09,
+      "stop_loss_short": 45.15,
+      "stop_loss_wave": 43.67,
+      "stop_loss_hard": 43.67,
+      "support_1": 45.75,
+      "support_2": 45.15,
+      "support_3": 43.67,
+      "resistance_1": 46.65,
+      "resistance_2": 47.7,
+      "recent_low_20": 43.7,
+      "buy_note": "A2 回踩買點｜積極 45.75、回踩 45.15、保守 43.67",
+      "stop_note": "短線停損 45.15、波段停損 43.67、嚴格停損 43.67",
+      "target_note": "第一賣點 46.65、第二賣點 50.09",
+      "cond_a1_ma20_up": 1,
+      "cond_a1_above_ma60": 1,
+      "cond_a1_macd_first_red": 1,
+      "cond_a1_ma5_cross_ma10": 0,
+      "cond_a1_breakout_20d": 1,
+      "cond_a1_vol_expand": 0,
+      "cond_a1_red_candle": 0,
+      "cond_a2_ma60_up": 1,
+      "cond_a2_bullish_alignment": 1,
+      "cond_a2_pullback_to_ma": 1,
+      "cond_a2_macd_positive": 1,
+      "cond_a2_vol_shrink": 1,
+      "cond_a2_higher_lows": 1,
+      "ret_3d": NaN,
+      "ret_5d": NaN,
+      "ret_10d": NaN,
+      "success_5d": NaN
+    },
+    {
+      "scan_id": "2026-07-23_2248",
+      "scan_date": "2026-07-23",
+      "scan_time": "2026-07-23 10:09:52",
+      "data_date": "2026-07-23",
+      "code": "2248",
+      "name": "華勝-KY",
+      "market": "上市",
+      "type": "股票",
+      "symbol": "2248.TW",
+      "grade": "A2",
+      "score": 37,
+      "reasons": "MA20向上、站上季線、季線向上、均線多頭排列、回踩均線、MACD紅柱中、縮量回踩、底部墊高、季線持續上揚(+9)、RSI健康區(60.8)(+8)、布林擴張(+8)、週線站上MA20(+12)",
+      "close": 62.7,
+      "open": 63.6,
+      "high": 64.3,
+      "low": 62.7,
+      "volume": 117713,
+      "vol_ratio": 0.34,
+      "rsi14": 60.8,
+      "dif": 2.1912,
+      "dea": 1.826,
+      "hist": 0.3652,
+      "ma5": 63.84,
+      "ma10": 62.69,
+      "ma20": 59.79,
+      "ma60": 56.94,
+      "bb_upper": 67.4,
+      "bb_mid": 59.79,
+      "bb_lower": 52.18,
+      "bb_width": 0.2547,
+      "aggressive_buy_price": 62.69,
+      "pullback_buy_price": 59.79,
+      "conservative_buy_price": 56.94,
+      "sell_price_1": 67.4,
+      "sell_price_2": 74.34,
+      "stop_loss_short": 59.79,
+      "stop_loss_wave": 56.94,
+      "stop_loss_hard": 56.94,
+      "support_1": 62.69,
+      "support_2": 59.79,
+      "support_3": 56.94,
+      "resistance_1": 67.4,
+      "resistance_2": 70.8,
+      "recent_low_20": 54.1,
+      "buy_note": "A2 回踩買點｜積極 62.69、回踩 59.79、保守 56.94",
+      "stop_note": "短線停損 59.79、波段停損 56.94、嚴格停損 56.94",
+      "target_note": "第一賣點 67.40、第二賣點 74.34",
+      "cond_a1_ma20_up": 1,
+      "cond_a1_above_ma60": 1,
+      "cond_a1_macd_first_red": 0,
+      "cond_a1_ma5_cross_ma10": 0,
+      "cond_a1_breakout_20d": 0,
+      "cond_a1_vol_expand": 0,
+      "cond_a1_red_candle": 0,
+      "cond_a2_ma60_up": 1,
+      "cond_a2_bullish_alignment": 1,
+      "cond_a2_pullback_to_ma": 1,
+      "cond_a2_macd_positive": 1,
+      "cond_a2_vol_shrink": 1,
+      "cond_a2_higher_lows": 1,
+      "ret_3d": NaN,
+      "ret_5d": NaN,
+      "ret_10d": NaN,
+      "success_5d": NaN
+    },
+    {
+      "scan_id": "2026-07-23_5306",
+      "scan_date": "2026-07-23",
+      "scan_time": "2026-07-23 10:10:21",
+      "data_date": "2026-07-23",
+      "code": "5306",
+      "name": "桂盟",
+      "market": "上市",
+      "type": "股票",
+      "symbol": "5306.TW",
+      "grade": "A2",
+      "score": 37,
+      "reasons": "MA20向上、站上季線、季線向上、均線多頭排列、回踩均線、MACD紅柱中、縮量回踩、底部墊高、季線持續上揚(+9)、RSI健康區(62.6)(+8)、布林擴張(+8)、週線站上MA20(+12)",
+      "close": 91.9,
+      "open": 92.9,
+      "high": 93.2,
+      "low": 91.8,
+      "volume": 104672,
+      "vol_ratio": 0.24,
+      "rsi14": 62.6,
+      "dif": 2.1447,
+      "dea": 1.7971,
+      "hist": 0.3476,
+      "ma5": 93.22,
+      "ma10": 92.03,
+      "ma20": 88.95,
+      "ma60": 85.48,
+      "bb_upper": 96.86,
+      "bb_mid": 88.95,
+      "bb_lower": 81.05,
+      "bb_width": 0.1776,
+      "aggressive_buy_price": 92.03,
+      "pullback_buy_price": 88.95,
+      "conservative_buy_price": 85.48,
+      "sell_price_1": 96.86,
+      "sell_price_2": 105.0,
+      "stop_loss_short": 88.95,
+      "stop_loss_wave": 85.48,
+      "stop_loss_hard": 85.48,
+      "support_1": 92.03,
+      "support_2": 88.95,
+      "support_3": 85.48,
+      "resistance_1": 96.86,
+      "resistance_2": 100.0,
+      "recent_low_20": 84.7,
+      "buy_note": "A2 回踩買點｜積極 92.03、回踩 88.95、保守 85.48",
+      "stop_note": "短線停損 88.95、波段停損 85.48、嚴格停損 85.48",
+      "target_note": "第一賣點 96.86、第二賣點 105.00",
       "cond_a1_ma20_up": 1,
       "cond_a1_above_ma60": 1,
       "cond_a1_macd_first_red": 0,
@@ -278,14 +542,7 @@
       "name": "科誠",
       "market": "上櫃",
       "symbol": "4987.TWO",
-      "reason": "too_short"
-    },
-    {
-      "code": "6184",
-      "name": "大豐電",
-      "market": "上市",
-      "symbol": "6184.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
+      "reason": "no_data"
     },
     {
       "code": "6188",
@@ -295,17 +552,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6185",
-      "name": "幃翔",
-      "market": "上櫃",
-      "symbol": "6185.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6187",
-      "name": "萬潤",
-      "market": "上櫃",
-      "symbol": "6187.TWO",
+      "code": "6184",
+      "name": "大豐電",
+      "market": "上市",
+      "symbol": "6184.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -316,17 +566,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6186",
-      "name": "新潤",
+      "code": "6190",
+      "name": "萬泰科",
       "market": "上櫃",
-      "symbol": "6186.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6191",
-      "name": "精成科",
-      "market": "上市",
-      "symbol": "6191.TW",
+      "symbol": "6190.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -337,10 +580,31 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6194",
-      "name": "育富",
+      "code": "6195",
+      "name": "詩肯",
       "market": "上櫃",
-      "symbol": "6194.TWO",
+      "symbol": "6195.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6191",
+      "name": "精成科",
+      "market": "上市",
+      "symbol": "6191.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6186",
+      "name": "新潤",
+      "market": "上櫃",
+      "symbol": "6186.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6187",
+      "name": "萬潤",
+      "market": "上櫃",
+      "symbol": "6187.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -351,17 +615,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6195",
-      "name": "詩肯",
+      "code": "6194",
+      "name": "育富",
       "market": "上櫃",
-      "symbol": "6195.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6190",
-      "name": "萬泰科",
-      "market": "上櫃",
-      "symbol": "6190.TWO",
+      "symbol": "6194.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -372,10 +629,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6199",
-      "name": "天品",
-      "market": "上櫃",
-      "symbol": "6199.TWO",
+      "code": "6197",
+      "name": "佳必琪",
+      "market": "上市",
+      "symbol": "6197.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -383,13 +640,6 @@
       "name": "亞弘電",
       "market": "上市",
       "symbol": "6201.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6204",
-      "name": "艾華",
-      "market": "上櫃",
-      "symbol": "6204.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -407,24 +657,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6206",
-      "name": "飛捷",
-      "market": "上市",
-      "symbol": "6206.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6197",
-      "name": "佳必琪",
-      "market": "上市",
-      "symbol": "6197.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6202",
       "name": "盛群",
       "market": "上市",
       "symbol": "6202.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6199",
+      "name": "天品",
+      "market": "上櫃",
+      "symbol": "6199.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6204",
+      "name": "艾華",
+      "market": "上櫃",
+      "symbol": "6204.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -435,17 +685,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6206",
+      "name": "飛捷",
+      "market": "上市",
+      "symbol": "6206.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6209",
       "name": "今國光",
       "market": "上市",
       "symbol": "6209.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6207",
-      "name": "雷科",
-      "market": "上櫃",
-      "symbol": "6207.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -456,66 +706,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6212",
-      "name": "理銘",
-      "market": "上櫃",
-      "symbol": "6212.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6214",
-      "name": "精誠",
-      "market": "上市",
-      "symbol": "6214.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6213",
       "name": "聯茂",
       "market": "上市",
       "symbol": "6213.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6215",
-      "name": "和椿",
-      "market": "上市",
-      "symbol": "6215.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6221",
-      "name": "晉泰",
-      "market": "上櫃",
-      "symbol": "6221.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6219",
-      "name": "富旺",
-      "market": "上櫃",
-      "symbol": "6219.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6220",
-      "name": "岳豐",
-      "market": "上櫃",
-      "symbol": "6220.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6217",
-      "name": "中探針",
-      "market": "上櫃",
-      "symbol": "6217.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6222",
-      "name": "立軒",
-      "market": "上櫃",
-      "symbol": "6222.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -526,10 +720,73 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6215",
+      "name": "和椿",
+      "market": "上市",
+      "symbol": "6215.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6212",
+      "name": "理銘",
+      "market": "上櫃",
+      "symbol": "6212.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6207",
+      "name": "雷科",
+      "market": "上櫃",
+      "symbol": "6207.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6214",
+      "name": "精誠",
+      "market": "上市",
+      "symbol": "6214.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6219",
+      "name": "富旺",
+      "market": "上櫃",
+      "symbol": "6219.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6218",
       "name": "豪勉",
       "market": "上櫃",
       "symbol": "6218.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6222",
+      "name": "立軒",
+      "market": "上櫃",
+      "symbol": "6222.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6221",
+      "name": "晉泰",
+      "market": "上櫃",
+      "symbol": "6221.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6220",
+      "name": "岳豐",
+      "market": "上櫃",
+      "symbol": "6220.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6225",
+      "name": "天瀚",
+      "market": "上市",
+      "symbol": "6225.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -547,13 +804,6 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6225",
-      "name": "天瀚",
-      "market": "上市",
-      "symbol": "6225.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6226",
       "name": "光鼎",
       "market": "上市",
@@ -561,10 +811,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6227",
-      "name": "茂綸",
+      "code": "6217",
+      "name": "中探針",
       "market": "上櫃",
-      "symbol": "6227.TWO",
+      "symbol": "6217.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6229",
+      "name": "研通",
+      "market": "上櫃",
+      "symbol": "6229.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -575,24 +832,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6233",
-      "name": "旺玖",
-      "market": "上櫃",
-      "symbol": "6233.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6230",
       "name": "尼得科超眾",
       "market": "上市",
       "symbol": "6230.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6229",
-      "name": "研通",
-      "market": "上櫃",
-      "symbol": "6229.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -610,45 +853,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6235",
-      "name": "華孚",
-      "market": "上市",
-      "symbol": "6235.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6239",
-      "name": "力成",
-      "market": "上市",
-      "symbol": "6239.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6240",
-      "name": "松崗",
+      "code": "6233",
+      "name": "旺玖",
       "market": "上櫃",
-      "symbol": "6240.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6242",
-      "name": "立康",
-      "market": "上櫃",
-      "symbol": "6242.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6236",
-      "name": "中湛",
-      "market": "上櫃",
-      "symbol": "6236.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6241",
-      "name": "易通展",
-      "market": "上櫃",
-      "symbol": "6241.TWO",
+      "symbol": "6233.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -659,10 +867,45 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6244",
-      "name": "茂迪",
+      "code": "6235",
+      "name": "華孚",
+      "market": "上市",
+      "symbol": "6235.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6227",
+      "name": "茂綸",
       "market": "上櫃",
-      "symbol": "6244.TWO",
+      "symbol": "6227.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6236",
+      "name": "中湛",
+      "market": "上櫃",
+      "symbol": "6236.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6239",
+      "name": "力成",
+      "market": "上市",
+      "symbol": "6239.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6241",
+      "name": "易通展",
+      "market": "上櫃",
+      "symbol": "6241.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6242",
+      "name": "立康",
+      "market": "上櫃",
+      "symbol": "6242.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -673,17 +916,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6248",
-      "name": "沛波",
+      "code": "6244",
+      "name": "茂迪",
       "market": "上櫃",
-      "symbol": "6248.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6259",
-      "name": "百徽",
-      "market": "上櫃",
-      "symbol": "6259.TWO",
+      "symbol": "6244.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -694,17 +930,38 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6257",
-      "name": "矽格",
-      "market": "上市",
-      "symbol": "6257.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6246",
       "name": "臺龍",
       "market": "上櫃",
       "symbol": "6246.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6248",
+      "name": "沛波",
+      "market": "上櫃",
+      "symbol": "6248.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6245",
+      "name": "立端",
+      "market": "上櫃",
+      "symbol": "6245.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6259",
+      "name": "百徽",
+      "market": "上櫃",
+      "symbol": "6259.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6240",
+      "name": "松崗",
+      "market": "上櫃",
+      "symbol": "6240.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -722,73 +979,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6245",
-      "name": "立端",
-      "market": "上櫃",
-      "symbol": "6245.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6265",
-      "name": "方土昶",
-      "market": "上櫃",
-      "symbol": "6265.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6269",
-      "name": "台郡",
-      "market": "上市",
-      "symbol": "6269.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6266",
-      "name": "泰詠",
-      "market": "上櫃",
-      "symbol": "6266.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6274",
-      "name": "台燿",
-      "market": "上櫃",
-      "symbol": "6274.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6270",
       "name": "倍微",
       "market": "上櫃",
       "symbol": "6270.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6275",
-      "name": "元山",
-      "market": "上櫃",
-      "symbol": "6275.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6271",
-      "name": "同欣電",
-      "market": "上市",
-      "symbol": "6271.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6278",
-      "name": "台表科",
-      "market": "上市",
-      "symbol": "6278.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6276",
-      "name": "安鈦克",
-      "market": "上櫃",
-      "symbol": "6276.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -799,10 +993,52 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6269",
+      "name": "台郡",
+      "market": "上市",
+      "symbol": "6269.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6265",
+      "name": "方土昶",
+      "market": "上櫃",
+      "symbol": "6265.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6266",
+      "name": "泰詠",
+      "market": "上櫃",
+      "symbol": "6266.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6271",
+      "name": "同欣電",
+      "market": "上市",
+      "symbol": "6271.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6274",
+      "name": "台燿",
+      "market": "上櫃",
+      "symbol": "6274.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6277",
       "name": "宏正",
       "market": "上市",
       "symbol": "6277.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6278",
+      "name": "台表科",
+      "market": "上市",
+      "symbol": "6278.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -813,17 +1049,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6284",
-      "name": "佳邦",
+      "code": "6279",
+      "name": "胡連",
       "market": "上櫃",
-      "symbol": "6284.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6291",
-      "name": "沛亨",
-      "market": "上櫃",
-      "symbol": "6291.TWO",
+      "symbol": "6279.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -834,38 +1063,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6281",
-      "name": "全國電",
-      "market": "上市",
-      "symbol": "6281.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6290",
-      "name": "良維",
+      "code": "6284",
+      "name": "佳邦",
       "market": "上櫃",
-      "symbol": "6290.TWO",
+      "symbol": "6284.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6279",
-      "name": "胡連",
+      "code": "6275",
+      "name": "元山",
       "market": "上櫃",
-      "symbol": "6279.TWO",
+      "symbol": "6275.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6294",
-      "name": "智基",
+      "code": "6276",
+      "name": "安鈦克",
       "market": "上櫃",
-      "symbol": "6294.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6405",
-      "name": "悅城",
-      "market": "上市",
-      "symbol": "6405.TW",
+      "symbol": "6276.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -876,10 +1091,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6409",
-      "name": "旭隼",
-      "market": "上市",
-      "symbol": "6409.TW",
+      "code": "6290",
+      "name": "良維",
+      "market": "上櫃",
+      "symbol": "6290.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6291",
+      "name": "沛亨",
+      "market": "上櫃",
+      "symbol": "6291.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6294",
+      "name": "智基",
+      "market": "上櫃",
+      "symbol": "6294.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -890,6 +1119,20 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6405",
+      "name": "悅城",
+      "market": "上市",
+      "symbol": "6405.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6409",
+      "name": "旭隼",
+      "market": "上市",
+      "symbol": "6409.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6411",
       "name": "晶焱",
       "market": "上櫃",
@@ -897,17 +1140,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6412",
-      "name": "群電",
+      "code": "6257",
+      "name": "矽格",
       "market": "上市",
-      "symbol": "6412.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6414",
-      "name": "樺漢",
-      "market": "上市",
-      "symbol": "6414.TW",
+      "symbol": "6257.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -918,24 +1154,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6416",
-      "name": "瑞祺電通",
-      "market": "上市",
-      "symbol": "6416.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6415",
       "name": "矽力*-KY",
       "market": "上市",
       "symbol": "6415.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6419",
-      "name": "京晨科",
-      "market": "上櫃",
-      "symbol": "6419.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -946,17 +1168,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6418",
-      "name": "詠昇",
+      "code": "6419",
+      "name": "京晨科",
       "market": "上櫃",
-      "symbol": "6418.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6432",
-      "name": "今展科",
-      "market": "上櫃",
-      "symbol": "6432.TWO",
+      "symbol": "6419.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -967,10 +1182,31 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6438",
-      "name": "迅得",
+      "code": "6418",
+      "name": "詠昇",
+      "market": "上櫃",
+      "symbol": "6418.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6416",
+      "name": "瑞祺電通",
       "market": "上市",
-      "symbol": "6438.TW",
+      "symbol": "6416.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6414",
+      "name": "樺漢",
+      "market": "上市",
+      "symbol": "6414.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6412",
+      "name": "群電",
+      "market": "上市",
+      "symbol": "6412.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -981,10 +1217,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6441",
-      "name": "廣錠",
+      "code": "6435",
+      "name": "大中",
       "market": "上櫃",
-      "symbol": "6441.TWO",
+      "symbol": "6435.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -995,10 +1231,38 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6435",
-      "name": "大中",
+      "code": "6432",
+      "name": "今展科",
       "market": "上櫃",
-      "symbol": "6435.TWO",
+      "symbol": "6432.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6438",
+      "name": "迅得",
+      "market": "上市",
+      "symbol": "6438.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6441",
+      "name": "廣錠",
+      "market": "上櫃",
+      "symbol": "6441.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6443",
+      "name": "元晶",
+      "market": "上市",
+      "symbol": "6443.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6456",
+      "name": "GIS-KY",
+      "market": "上市",
+      "symbol": "6456.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1009,10 +1273,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6443",
-      "name": "元晶",
-      "market": "上市",
-      "symbol": "6443.TW",
+      "code": "6462",
+      "name": "神盾",
+      "market": "上櫃",
+      "symbol": "6462.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6461",
+      "name": "益得",
+      "market": "上櫃",
+      "symbol": "6461.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1030,27 +1301,6 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6461",
-      "name": "益得",
-      "market": "上櫃",
-      "symbol": "6461.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6462",
-      "name": "神盾",
-      "market": "上櫃",
-      "symbol": "6462.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6464",
-      "name": "台數科",
-      "market": "上市",
-      "symbol": "6464.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6451",
       "name": "訊芯-KY",
       "market": "上市",
@@ -1058,24 +1308,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6456",
-      "name": "GIS-KY",
+      "code": "6281",
+      "name": "全國電",
       "market": "上市",
-      "symbol": "6456.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6470",
-      "name": "宇智",
-      "market": "上櫃",
-      "symbol": "6470.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6474",
-      "name": "華豫寧",
-      "market": "上櫃",
-      "symbol": "6474.TWO",
+      "symbol": "6281.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1093,10 +1329,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6485",
-      "name": "點序",
+      "code": "6470",
+      "name": "宇智",
       "market": "上櫃",
-      "symbol": "6485.TWO",
+      "symbol": "6470.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1107,10 +1343,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6488",
-      "name": "環球晶",
+      "code": "6469",
+      "name": "大樹",
       "market": "上櫃",
-      "symbol": "6488.TWO",
+      "symbol": "6469.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1121,24 +1357,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6486",
-      "name": "互動",
+      "code": "6474",
+      "name": "華豫寧",
       "market": "上櫃",
-      "symbol": "6486.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6469",
-      "name": "大樹",
-      "market": "上櫃",
-      "symbol": "6469.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6494",
-      "name": "九齊",
-      "market": "上櫃",
-      "symbol": "6494.TWO",
+      "symbol": "6474.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1149,10 +1371,31 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6485",
+      "name": "點序",
+      "market": "上櫃",
+      "symbol": "6485.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6494",
+      "name": "九齊",
+      "market": "上櫃",
+      "symbol": "6494.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6496",
       "name": "科懋",
       "market": "上櫃",
       "symbol": "6496.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6486",
+      "name": "互動",
+      "market": "上櫃",
+      "symbol": "6486.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1163,10 +1406,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6509",
-      "name": "聚和",
-      "market": "上櫃",
-      "symbol": "6509.TWO",
+      "code": "6504",
+      "name": "南六",
+      "market": "上市",
+      "symbol": "6504.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1174,6 +1417,20 @@
       "name": "益安",
       "market": "上櫃",
       "symbol": "6499.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6488",
+      "name": "環球晶",
+      "market": "上櫃",
+      "symbol": "6488.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6492",
+      "name": "生華科",
+      "market": "上櫃",
+      "symbol": "6492.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1191,17 +1448,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6509",
+      "name": "聚和",
+      "market": "上櫃",
+      "symbol": "6509.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6510",
       "name": "精測",
       "market": "上櫃",
       "symbol": "6510.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6504",
-      "name": "南六",
-      "market": "上市",
-      "symbol": "6504.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1212,10 +1469,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6492",
-      "name": "生華科",
-      "market": "上櫃",
-      "symbol": "6492.TWO",
+      "code": "6515",
+      "name": "穎崴",
+      "market": "上市",
+      "symbol": "6515.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1226,45 +1483,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6515",
-      "name": "穎崴",
+      "code": "6464",
+      "name": "台數科",
       "market": "上市",
-      "symbol": "6515.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6517",
-      "name": "保勝光學",
-      "market": "上櫃",
-      "symbol": "6517.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6523",
-      "name": "達爾膚",
-      "market": "上櫃",
-      "symbol": "6523.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6530",
-      "name": "創威",
-      "market": "上櫃",
-      "symbol": "6530.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6527",
-      "name": "明達醫",
-      "market": "上櫃",
-      "symbol": "6527.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6525",
-      "name": "捷敏-KY",
-      "market": "上市",
-      "symbol": "6525.TW",
+      "symbol": "6464.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1275,10 +1497,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6531",
-      "name": "愛普*",
+      "code": "6525",
+      "name": "捷敏-KY",
       "market": "上市",
-      "symbol": "6531.TW",
+      "symbol": "6525.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1289,31 +1511,38 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6533",
-      "name": "晶心科",
+      "code": "6530",
+      "name": "創威",
+      "market": "上櫃",
+      "symbol": "6530.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6517",
+      "name": "保勝光學",
+      "market": "上櫃",
+      "symbol": "6517.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6527",
+      "name": "明達醫",
+      "market": "上櫃",
+      "symbol": "6527.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6523",
+      "name": "達爾膚",
+      "market": "上櫃",
+      "symbol": "6523.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6531",
+      "name": "愛普*",
       "market": "上市",
-      "symbol": "6533.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6538",
-      "name": "倉和",
-      "market": "上櫃",
-      "symbol": "6538.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6535",
-      "name": "順藥",
-      "market": "上櫃",
-      "symbol": "6535.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6542",
-      "name": "隆中",
-      "market": "上櫃",
-      "symbol": "6542.TWO",
+      "symbol": "6531.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1324,10 +1553,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6546",
-      "name": "正基",
-      "market": "上櫃",
-      "symbol": "6546.TWO",
+      "code": "6533",
+      "name": "晶心科",
+      "market": "上市",
+      "symbol": "6533.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1338,6 +1567,13 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6538",
+      "name": "倉和",
+      "market": "上櫃",
+      "symbol": "6538.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6547",
       "name": "高端疫苗",
       "market": "上櫃",
@@ -1345,17 +1581,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6548",
-      "name": "長科*",
+      "code": "6542",
+      "name": "隆中",
       "market": "上櫃",
-      "symbol": "6548.TWO",
+      "symbol": "6542.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6550",
-      "name": "北極星藥業-KY",
-      "market": "上市",
-      "symbol": "6550.TW",
+      "code": "6535",
+      "name": "順藥",
+      "market": "上櫃",
+      "symbol": "6535.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6546",
+      "name": "正基",
+      "market": "上櫃",
+      "symbol": "6546.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1366,6 +1609,13 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6548",
+      "name": "長科*",
+      "market": "上櫃",
+      "symbol": "6548.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6558",
       "name": "興能高",
       "market": "上市",
@@ -1373,17 +1623,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6552",
-      "name": "易華電",
+      "code": "6550",
+      "name": "北極星藥業-KY",
       "market": "上市",
-      "symbol": "6552.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6570",
-      "name": "維田",
-      "market": "上櫃",
-      "symbol": "6570.TWO",
+      "symbol": "6550.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1394,13 +1637,6 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6561",
-      "name": "是方",
-      "market": "上櫃",
-      "symbol": "6561.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6560",
       "name": "欣普羅",
       "market": "上櫃",
@@ -1408,17 +1644,31 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6570",
+      "name": "維田",
+      "market": "上櫃",
+      "symbol": "6570.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6552",
+      "name": "易華電",
+      "market": "上市",
+      "symbol": "6552.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6561",
+      "name": "是方",
+      "market": "上櫃",
+      "symbol": "6561.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6569",
       "name": "醫揚",
       "market": "上櫃",
       "symbol": "6569.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6573",
-      "name": "虹揚-KY",
-      "market": "上市",
-      "symbol": "6573.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1457,20 +1707,6 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6577",
-      "name": "勁豐",
-      "market": "上櫃",
-      "symbol": "6577.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6585",
-      "name": "鼎基",
-      "market": "上市",
-      "symbol": "6585.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6581",
       "name": "鋼聯",
       "market": "上市",
@@ -1478,31 +1714,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6584",
-      "name": "南俊國際",
-      "market": "上櫃",
-      "symbol": "6584.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6591",
-      "name": "動力-KY",
+      "code": "6573",
+      "name": "虹揚-KY",
       "market": "上市",
-      "symbol": "6591.TW",
+      "symbol": "6573.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6589",
-      "name": "台康生技",
-      "market": "上市",
-      "symbol": "6589.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6596",
-      "name": "寬宏藝術",
+      "code": "6577",
+      "name": "勁豐",
       "market": "上櫃",
-      "symbol": "6596.TWO",
+      "symbol": "6577.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1510,6 +1732,13 @@
       "name": "普鴻",
       "market": "上櫃",
       "symbol": "6590.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6584",
+      "name": "南俊國際",
+      "market": "上櫃",
+      "symbol": "6584.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1527,24 +1756,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6598",
-      "name": "ABC-KY",
+      "code": "6589",
+      "name": "台康生技",
       "market": "上市",
-      "symbol": "6598.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6603",
-      "name": "富強鑫",
-      "market": "上櫃",
-      "symbol": "6603.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6597",
-      "name": "立誠",
-      "market": "上櫃",
-      "symbol": "6597.TWO",
+      "symbol": "6589.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1555,24 +1770,31 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6606",
-      "name": "建德工業",
+      "code": "6585",
+      "name": "鼎基",
       "market": "上市",
-      "symbol": "6606.TW",
+      "symbol": "6585.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6612",
-      "name": "奈米醫材",
+      "code": "6597",
+      "name": "立誠",
       "market": "上櫃",
-      "symbol": "6612.TWO",
+      "symbol": "6597.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6609",
-      "name": "瀧澤科",
+      "code": "6591",
+      "name": "動力-KY",
+      "market": "上市",
+      "symbol": "6591.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6596",
+      "name": "寬宏藝術",
       "market": "上櫃",
-      "symbol": "6609.TWO",
+      "symbol": "6596.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1583,24 +1805,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6614",
-      "name": "資拓宏宇",
+      "code": "6612",
+      "name": "奈米醫材",
+      "market": "上櫃",
+      "symbol": "6612.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6603",
+      "name": "富強鑫",
+      "market": "上櫃",
+      "symbol": "6603.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6606",
+      "name": "建德工業",
       "market": "上市",
-      "symbol": "6614.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6615",
-      "name": "慧智",
-      "market": "上櫃",
-      "symbol": "6615.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6613",
-      "name": "朋億*",
-      "market": "上櫃",
-      "symbol": "6613.TWO",
+      "symbol": "6606.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1611,17 +1833,38 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6617",
-      "name": "共信-KY",
-      "market": "上櫃",
-      "symbol": "6617.TWO",
+      "code": "6598",
+      "name": "ABC-KY",
+      "market": "上市",
+      "symbol": "6598.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6629",
-      "name": "泰金-KY",
+      "code": "6613",
+      "name": "朋億*",
       "market": "上櫃",
-      "symbol": "6629.TWO",
+      "symbol": "6613.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6609",
+      "name": "瀧澤科",
+      "market": "上櫃",
+      "symbol": "6609.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6615",
+      "name": "慧智",
+      "market": "上櫃",
+      "symbol": "6615.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6614",
+      "name": "資拓宏宇",
+      "market": "上市",
+      "symbol": "6614.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1632,59 +1875,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6624",
-      "name": "萬年清",
+      "code": "6629",
+      "name": "泰金-KY",
       "market": "上櫃",
-      "symbol": "6624.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6642",
-      "name": "富致",
-      "market": "上櫃",
-      "symbol": "6642.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6625",
-      "name": "必應",
-      "market": "上市",
-      "symbol": "6625.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6649",
-      "name": "台生材",
-      "market": "上櫃",
-      "symbol": "6649.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6637",
-      "name": "醫影",
-      "market": "上櫃",
-      "symbol": "6637.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6641",
-      "name": "基士德-KY",
-      "market": "上市",
-      "symbol": "6641.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6643",
-      "name": "M31",
-      "market": "上櫃",
-      "symbol": "6643.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6651",
-      "name": "全宇昕",
-      "market": "上櫃",
-      "symbol": "6651.TWO",
+      "symbol": "6629.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1695,10 +1889,45 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6655",
-      "name": "科定",
+      "code": "6624",
+      "name": "萬年清",
+      "market": "上櫃",
+      "symbol": "6624.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6637",
+      "name": "醫影",
+      "market": "上櫃",
+      "symbol": "6637.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6617",
+      "name": "共信-KY",
+      "market": "上櫃",
+      "symbol": "6617.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6625",
+      "name": "必應",
       "market": "上市",
-      "symbol": "6655.TW",
+      "symbol": "6625.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6651",
+      "name": "全宇昕",
+      "market": "上櫃",
+      "symbol": "6651.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6642",
+      "name": "富致",
+      "market": "上櫃",
+      "symbol": "6642.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1709,24 +1938,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6657",
-      "name": "華安",
-      "market": "上市",
-      "symbol": "6657.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6658",
-      "name": "聯策",
-      "market": "上市",
-      "symbol": "6658.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6662",
-      "name": "樂斯科",
+      "code": "6643",
+      "name": "M31",
       "market": "上櫃",
-      "symbol": "6662.TWO",
+      "symbol": "6643.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1737,10 +1952,45 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6666",
-      "name": "羅麗芬-KY",
+      "code": "6662",
+      "name": "樂斯科",
+      "market": "上櫃",
+      "symbol": "6662.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6658",
+      "name": "聯策",
       "market": "上市",
-      "symbol": "6666.TW",
+      "symbol": "6658.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6657",
+      "name": "華安",
+      "market": "上市",
+      "symbol": "6657.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6649",
+      "name": "台生材",
+      "market": "上櫃",
+      "symbol": "6649.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6641",
+      "name": "基士德-KY",
+      "market": "上市",
+      "symbol": "6641.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6655",
+      "name": "科定",
+      "market": "上市",
+      "symbol": "6655.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1751,10 +2001,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6670",
-      "name": "復盛應用",
+      "code": "6669",
+      "name": "緯穎",
       "market": "上市",
-      "symbol": "6670.TW",
+      "symbol": "6669.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1765,10 +2015,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6671",
-      "name": "三能-KY",
+      "code": "6667",
+      "name": "信紘科",
+      "market": "上櫃",
+      "symbol": "6667.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6666",
+      "name": "羅麗芬-KY",
       "market": "上市",
-      "symbol": "6671.TW",
+      "symbol": "6666.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6670",
+      "name": "復盛應用",
+      "market": "上市",
+      "symbol": "6670.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1779,20 +2043,6 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6679",
-      "name": "鈺太",
-      "market": "上櫃",
-      "symbol": "6679.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6669",
-      "name": "緯穎",
-      "market": "上市",
-      "symbol": "6669.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6672",
       "name": "騰輝電子-KY",
       "market": "上市",
@@ -1800,17 +2050,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6680",
-      "name": "鑫創電子",
-      "market": "上櫃",
-      "symbol": "6680.TWO",
+      "code": "6671",
+      "name": "三能-KY",
+      "market": "上市",
+      "symbol": "6671.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6667",
-      "name": "信紘科",
+      "code": "6683",
+      "name": "雍智科技",
       "market": "上櫃",
-      "symbol": "6667.TWO",
+      "symbol": "6683.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1828,13 +2078,6 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6690",
-      "name": "安碁資訊",
-      "market": "上櫃",
-      "symbol": "6690.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6692",
       "name": "進能服",
       "market": "上櫃",
@@ -1842,10 +2085,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6693",
-      "name": "廣閎科",
+      "code": "6679",
+      "name": "鈺太",
       "market": "上櫃",
-      "symbol": "6693.TWO",
+      "symbol": "6679.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6690",
+      "name": "安碁資訊",
+      "market": "上櫃",
+      "symbol": "6690.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1856,17 +2106,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6680",
+      "name": "鑫創電子",
+      "market": "上櫃",
+      "symbol": "6680.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6695",
       "name": "芯鼎",
       "market": "上市",
       "symbol": "6695.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6698",
-      "name": "旭暉應材",
-      "market": "上市",
-      "symbol": "6698.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1877,10 +2127,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6706",
-      "name": "惠特",
+      "code": "6698",
+      "name": "旭暉應材",
       "market": "上市",
-      "symbol": "6706.TW",
+      "symbol": "6698.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6693",
+      "name": "廣閎科",
+      "market": "上櫃",
+      "symbol": "6693.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1888,6 +2145,27 @@
       "name": "軒郁",
       "market": "上櫃",
       "symbol": "6703.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6706",
+      "name": "惠特",
+      "market": "上市",
+      "symbol": "6706.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6708",
+      "name": "天擎",
+      "market": "上櫃",
+      "symbol": "6708.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6715",
+      "name": "嘉基",
+      "market": "上市",
+      "symbol": "6715.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1912,45 +2190,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6715",
-      "name": "嘉基",
-      "market": "上市",
-      "symbol": "6715.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6716",
-      "name": "應廣",
-      "market": "上櫃",
-      "symbol": "6716.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6720",
-      "name": "久昌",
-      "market": "上櫃",
-      "symbol": "6720.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6722",
       "name": "輝創",
       "market": "上市",
       "symbol": "6722.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6708",
-      "name": "天擎",
-      "market": "上櫃",
-      "symbol": "6708.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6727",
-      "name": "亞泰金屬",
-      "market": "上櫃",
-      "symbol": "6727.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1961,10 +2204,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6732",
-      "name": "昇佳電子",
+      "code": "6716",
+      "name": "應廣",
       "market": "上櫃",
-      "symbol": "6732.TWO",
+      "symbol": "6716.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -1975,24 +2218,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6720",
+      "name": "久昌",
+      "market": "上櫃",
+      "symbol": "6720.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6727",
+      "name": "亞泰金屬",
+      "market": "上櫃",
+      "symbol": "6727.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6730",
       "name": "常廣",
       "market": "上櫃",
       "symbol": "6730.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6733",
-      "name": "博晟生醫",
-      "market": "上櫃",
-      "symbol": "6733.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6735",
-      "name": "美達科技",
-      "market": "上櫃",
-      "symbol": "6735.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2003,10 +2246,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6739",
-      "name": "竹陞科技",
+      "code": "6735",
+      "name": "美達科技",
       "market": "上櫃",
-      "symbol": "6739.TWO",
+      "symbol": "6735.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2017,24 +2260,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6752",
-      "name": "叡揚",
+      "code": "6732",
+      "name": "昇佳電子",
       "market": "上櫃",
-      "symbol": "6752.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6753",
-      "name": "龍德造船",
-      "market": "上市",
-      "symbol": "6753.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6751",
-      "name": "智聯服務",
-      "market": "上櫃",
-      "symbol": "6751.TWO",
+      "symbol": "6732.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2045,6 +2274,41 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6752",
+      "name": "叡揚",
+      "market": "上櫃",
+      "symbol": "6752.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6751",
+      "name": "智聯服務",
+      "market": "上櫃",
+      "symbol": "6751.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6733",
+      "name": "博晟生醫",
+      "market": "上櫃",
+      "symbol": "6733.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6739",
+      "name": "竹陞科技",
+      "market": "上櫃",
+      "symbol": "6739.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6753",
+      "name": "龍德造船",
+      "market": "上市",
+      "symbol": "6753.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6754",
       "name": "匯僑設計",
       "market": "上市",
@@ -2052,10 +2316,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6757",
-      "name": "台灣虎航",
+      "code": "6756",
+      "name": "威鋒電子",
       "market": "上市",
-      "symbol": "6757.TW",
+      "symbol": "6756.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2066,17 +2330,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6767",
-      "name": "台微醫",
-      "market": "上櫃",
-      "symbol": "6767.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6762",
-      "name": "達亞",
-      "market": "上櫃",
-      "symbol": "6762.TWO",
+      "code": "6757",
+      "name": "台灣虎航",
+      "market": "上市",
+      "symbol": "6757.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2094,6 +2351,13 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6762",
+      "name": "達亞",
+      "market": "上櫃",
+      "symbol": "6762.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6770",
       "name": "力積電",
       "market": "上市",
@@ -2101,31 +2365,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6767",
+      "name": "台微醫",
+      "market": "上櫃",
+      "symbol": "6767.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6785",
+      "name": "昱展新藥",
+      "market": "上櫃",
+      "symbol": "6785.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6781",
       "name": "AES-KY",
       "market": "上市",
       "symbol": "6781.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6776",
-      "name": "展碁國際",
-      "market": "上市",
-      "symbol": "6776.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6756",
-      "name": "威鋒電子",
-      "market": "上市",
-      "symbol": "6756.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6782",
-      "name": "視陽",
-      "market": "上市",
-      "symbol": "6782.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2143,6 +2400,13 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6794",
+      "name": "向榮生技",
+      "market": "上市",
+      "symbol": "6794.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6789",
       "name": "采鈺",
       "market": "上市",
@@ -2157,6 +2421,13 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6782",
+      "name": "視陽",
+      "market": "上市",
+      "symbol": "6782.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6791",
       "name": "虎門科技",
       "market": "上櫃",
@@ -2164,24 +2435,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6799",
-      "name": "來頡",
+      "code": "6776",
+      "name": "展碁國際",
       "market": "上市",
-      "symbol": "6799.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6785",
-      "name": "昱展新藥",
-      "market": "上櫃",
-      "symbol": "6785.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6803",
-      "name": "崑鼎",
-      "market": "上櫃",
-      "symbol": "6803.TWO",
+      "symbol": "6776.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2192,24 +2449,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6804",
-      "name": "明係",
-      "market": "上櫃",
-      "symbol": "6804.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6794",
-      "name": "向榮生技",
+      "code": "6799",
+      "name": "來頡",
       "market": "上市",
-      "symbol": "6794.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6806",
-      "name": "森崴能源",
-      "market": "上市",
-      "symbol": "6806.TW",
+      "symbol": "6799.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2220,13 +2463,6 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6807",
-      "name": "峰源-KY",
-      "market": "上市",
-      "symbol": "6807.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6821",
       "name": "聯寶",
       "market": "上櫃",
@@ -2234,24 +2470,31 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6823",
-      "name": "濾能",
+      "code": "6803",
+      "name": "崑鼎",
       "market": "上櫃",
-      "symbol": "6823.TWO",
+      "symbol": "6803.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6830",
-      "name": "汎銓",
+      "code": "6806",
+      "name": "森崴能源",
       "market": "上市",
-      "symbol": "6830.TW",
+      "symbol": "6806.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6829",
-      "name": "千附精密",
+      "code": "6804",
+      "name": "明係",
       "market": "上櫃",
-      "symbol": "6829.TWO",
+      "symbol": "6804.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6807",
+      "name": "峰源-KY",
+      "market": "上市",
+      "symbol": "6807.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2262,6 +2505,20 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6829",
+      "name": "千附精密",
+      "market": "上櫃",
+      "symbol": "6829.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6830",
+      "name": "汎銓",
+      "market": "上市",
+      "symbol": "6830.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6831",
       "name": "邁科",
       "market": "上市",
@@ -2269,38 +2526,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6840",
-      "name": "東研信超",
+      "code": "6823",
+      "name": "濾能",
       "market": "上櫃",
-      "symbol": "6840.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6835",
-      "name": "圓裕",
-      "market": "上市",
-      "symbol": "6835.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6843",
-      "name": "進典",
-      "market": "上櫃",
-      "symbol": "6843.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6841",
-      "name": "長佳智能",
-      "market": "上櫃",
-      "symbol": "6841.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6838",
-      "name": "台新藥",
-      "market": "上市",
-      "symbol": "6838.TW",
+      "symbol": "6823.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2311,10 +2540,31 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6838",
+      "name": "台新藥",
+      "market": "上市",
+      "symbol": "6838.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6844",
       "name": "諾貝兒",
       "market": "上櫃",
       "symbol": "6844.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6840",
+      "name": "東研信超",
+      "market": "上櫃",
+      "symbol": "6840.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6841",
+      "name": "長佳智能",
+      "market": "上櫃",
+      "symbol": "6841.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2325,52 +2575,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6856",
-      "name": "鑫傳",
+      "code": "6843",
+      "name": "進典",
       "market": "上櫃",
-      "symbol": "6856.TWO",
+      "symbol": "6843.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6862",
-      "name": "三集瑞-KY",
+      "code": "6835",
+      "name": "圓裕",
       "market": "上市",
-      "symbol": "6862.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6861",
-      "name": "睿生光電",
-      "market": "上市",
-      "symbol": "6861.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6869",
-      "name": "雲豹能源",
-      "market": "上市",
-      "symbol": "6869.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6863",
-      "name": "永道-KY",
-      "market": "上市",
-      "symbol": "6863.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6865",
-      "name": "偉康科技",
-      "market": "上櫃",
-      "symbol": "6865.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6872",
-      "name": "浩宇生醫",
-      "market": "上櫃",
-      "symbol": "6872.TWO",
+      "symbol": "6835.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2388,10 +2603,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6870",
-      "name": "騰雲",
+      "code": "6862",
+      "name": "三集瑞-KY",
+      "market": "上市",
+      "symbol": "6862.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6865",
+      "name": "偉康科技",
       "market": "上櫃",
-      "symbol": "6870.TWO",
+      "symbol": "6865.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6863",
+      "name": "永道-KY",
+      "market": "上市",
+      "symbol": "6863.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2402,24 +2631,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6874",
-      "name": "倍力",
+      "code": "6870",
+      "name": "騰雲",
       "market": "上櫃",
-      "symbol": "6874.TWO",
+      "symbol": "6870.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6877",
-      "name": "鏵友益",
-      "market": "上櫃",
-      "symbol": "6877.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6884",
-      "name": "海柏特",
-      "market": "上櫃",
-      "symbol": "6884.TWO",
+      "code": "6869",
+      "name": "雲豹能源",
+      "market": "上市",
+      "symbol": "6869.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2430,10 +2652,45 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6885",
-      "name": "全福生技",
+      "code": "6872",
+      "name": "浩宇生醫",
+      "market": "上櫃",
+      "symbol": "6872.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6874",
+      "name": "倍力",
+      "market": "上櫃",
+      "symbol": "6874.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6861",
+      "name": "睿生光電",
       "market": "上市",
-      "symbol": "6885.TW",
+      "symbol": "6861.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6856",
+      "name": "鑫傳",
+      "market": "上櫃",
+      "symbol": "6856.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6881",
+      "name": "潤德",
+      "market": "上櫃",
+      "symbol": "6881.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6884",
+      "name": "海柏特",
+      "market": "上櫃",
+      "symbol": "6884.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2444,10 +2701,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6881",
-      "name": "潤德",
+      "code": "6885",
+      "name": "全福生技",
+      "market": "上市",
+      "symbol": "6885.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6877",
+      "name": "鏵友益",
       "market": "上櫃",
-      "symbol": "6881.TWO",
+      "symbol": "6877.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6894",
+      "name": "衛司特",
+      "market": "上櫃",
+      "symbol": "6894.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2479,24 +2750,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6903",
-      "name": "巨漢",
-      "market": "上櫃",
-      "symbol": "6903.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6907",
-      "name": "雅特力-KY",
-      "market": "上櫃",
-      "symbol": "6907.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6909",
-      "name": "創控",
+      "code": "6906",
+      "name": "現觀科",
       "market": "上市",
-      "symbol": "6909.TW",
+      "symbol": "6906.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2507,6 +2764,20 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6907",
+      "name": "雅特力-KY",
+      "market": "上櫃",
+      "symbol": "6907.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6903",
+      "name": "巨漢",
+      "market": "上櫃",
+      "symbol": "6903.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6902",
       "name": "GOGOLOOK",
       "market": "上市",
@@ -2514,59 +2785,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6906",
-      "name": "現觀科",
+      "code": "6909",
+      "name": "創控",
       "market": "上市",
-      "symbol": "6906.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6894",
-      "name": "衛司特",
-      "market": "上櫃",
-      "symbol": "6894.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6910",
-      "name": "德鴻",
-      "market": "上櫃",
-      "symbol": "6910.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6913",
-      "name": "鴻呈",
-      "market": "上櫃",
-      "symbol": "6913.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6923",
-      "name": "中台",
-      "market": "上市",
-      "symbol": "6923.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6916",
-      "name": "華凌",
-      "market": "上市",
-      "symbol": "6916.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6919",
-      "name": "康霈*",
-      "market": "上市",
-      "symbol": "6919.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6922",
-      "name": "宸曜",
-      "market": "上櫃",
-      "symbol": "6922.TWO",
+      "symbol": "6909.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2577,10 +2799,38 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6933",
-      "name": "AMAX-KY",
+      "code": "6913",
+      "name": "鴻呈",
+      "market": "上櫃",
+      "symbol": "6913.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6910",
+      "name": "德鴻",
+      "market": "上櫃",
+      "symbol": "6910.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6916",
+      "name": "華凌",
       "market": "上市",
-      "symbol": "6933.TW",
+      "symbol": "6916.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6922",
+      "name": "宸曜",
+      "market": "上櫃",
+      "symbol": "6922.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6923",
+      "name": "中台",
+      "market": "上市",
+      "symbol": "6923.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2591,6 +2841,20 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6925",
+      "name": "意藍",
+      "market": "上櫃",
+      "symbol": "6925.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6919",
+      "name": "康霈*",
+      "market": "上市",
+      "symbol": "6919.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6931",
       "name": "青松健康",
       "market": "上市",
@@ -2598,10 +2862,45 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6944",
+      "name": "兆聯實業",
+      "market": "上市",
+      "symbol": "6944.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6937",
+      "name": "天虹",
+      "market": "上市",
+      "symbol": "6937.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6952",
+      "name": "大武山",
+      "market": "上市",
+      "symbol": "6952.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6933",
+      "name": "AMAX-KY",
+      "market": "上市",
+      "symbol": "6933.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6928",
       "name": "攸泰科技",
       "market": "上市",
       "symbol": "6928.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6929",
+      "name": "佑全",
+      "market": "上櫃",
+      "symbol": "6929.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2619,87 +2918,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6944",
-      "name": "兆聯實業",
-      "market": "上市",
-      "symbol": "6944.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6929",
-      "name": "佑全",
-      "market": "上櫃",
-      "symbol": "6929.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6952",
-      "name": "大武山",
-      "market": "上市",
-      "symbol": "6952.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6937",
-      "name": "天虹",
-      "market": "上市",
-      "symbol": "6937.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6925",
-      "name": "意藍",
-      "market": "上櫃",
-      "symbol": "6925.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "6953",
       "name": "家碩",
       "market": "上櫃",
       "symbol": "6953.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6957",
-      "name": "裕慶-KY",
-      "market": "上市",
-      "symbol": "6957.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6967",
-      "name": "汎瑋材料",
-      "market": "上櫃",
-      "symbol": "6967.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6961",
-      "name": "旅天下",
-      "market": "上櫃",
-      "symbol": "6961.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6962",
-      "name": "奕力-KY",
-      "market": "上市",
-      "symbol": "6962.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6982",
-      "name": "大井泵浦",
-      "market": "上櫃",
-      "symbol": "6982.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "6994",
-      "name": "富威電力",
-      "market": "上市",
-      "symbol": "6994.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2710,6 +2932,20 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "6957",
+      "name": "裕慶-KY",
+      "market": "上市",
+      "symbol": "6957.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6961",
+      "name": "旅天下",
+      "market": "上櫃",
+      "symbol": "6961.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "6968",
       "name": "萬達寵物",
       "market": "上櫃",
@@ -2717,17 +2953,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6971",
-      "name": "惠民實業",
+      "code": "6967",
+      "name": "汎瑋材料",
       "market": "上櫃",
-      "symbol": "6971.TWO",
+      "symbol": "6967.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6997",
-      "name": "博弘",
-      "market": "上櫃",
-      "symbol": "6997.TWO",
+      "code": "6962",
+      "name": "奕力-KY",
+      "market": "上市",
+      "symbol": "6962.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6958",
+      "name": "日盛台駿",
+      "market": "上市",
+      "symbol": "6958.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2738,10 +2981,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7547",
-      "name": "碩網",
-      "market": "上櫃",
-      "symbol": "7547.TWO",
+      "code": "6994",
+      "name": "富威電力",
+      "market": "上市",
+      "symbol": "6994.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2752,17 +2995,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7642",
-      "name": "昶瑞機電",
+      "code": "6997",
+      "name": "博弘",
       "market": "上櫃",
-      "symbol": "7642.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "7703",
-      "name": "銳澤",
-      "market": "上櫃",
-      "symbol": "7703.TWO",
+      "symbol": "6997.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2773,10 +3009,38 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "7547",
+      "name": "碩網",
+      "market": "上櫃",
+      "symbol": "7547.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "7584",
       "name": "樂意",
       "market": "上櫃",
       "symbol": "7584.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "7642",
+      "name": "昶瑞機電",
+      "market": "上櫃",
+      "symbol": "7642.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6971",
+      "name": "惠民實業",
+      "market": "上櫃",
+      "symbol": "6971.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "6982",
+      "name": "大井泵浦",
+      "market": "上櫃",
+      "symbol": "6982.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2787,17 +3051,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7709",
-      "name": "榮田",
+      "code": "7703",
+      "name": "銳澤",
       "market": "上櫃",
-      "symbol": "7709.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "7704",
-      "name": "明遠精密",
-      "market": "上櫃",
-      "symbol": "7704.TWO",
+      "symbol": "7703.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2815,10 +3072,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "6958",
-      "name": "日盛台駿",
-      "market": "上市",
-      "symbol": "6958.TW",
+      "code": "7704",
+      "name": "明遠精密",
+      "market": "上櫃",
+      "symbol": "7704.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2836,10 +3093,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7717",
-      "name": "萊德光電-KY",
+      "code": "7709",
+      "name": "榮田",
       "market": "上櫃",
-      "symbol": "7717.TWO",
+      "symbol": "7709.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2850,13 +3107,6 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7718",
-      "name": "友鋮",
-      "market": "上櫃",
-      "symbol": "7718.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "7714",
       "name": "創泓科技",
       "market": "上櫃",
@@ -2864,24 +3114,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7716",
-      "name": "昱臺國際",
+      "code": "7718",
+      "name": "友鋮",
       "market": "上櫃",
-      "symbol": "7716.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "7721",
-      "name": "微程式",
-      "market": "上市",
-      "symbol": "7721.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "7723",
-      "name": "築間",
-      "market": "上櫃",
-      "symbol": "7723.TWO",
+      "symbol": "7718.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2899,31 +3135,31 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7738",
-      "name": "東聯互動",
+      "code": "7717",
+      "name": "萊德光電-KY",
       "market": "上櫃",
-      "symbol": "7738.TWO",
+      "symbol": "7717.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7747",
-      "name": "昕奇雲端",
+      "code": "7723",
+      "name": "築間",
       "market": "上櫃",
-      "symbol": "7747.TWO",
+      "symbol": "7723.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7743",
-      "name": "金利食安",
+      "code": "7716",
+      "name": "昱臺國際",
       "market": "上櫃",
-      "symbol": "7743.TWO",
+      "symbol": "7716.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7736",
-      "name": "虎山",
+      "code": "7721",
+      "name": "微程式",
       "market": "上市",
-      "symbol": "7736.TW",
+      "symbol": "7721.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2941,17 +3177,24 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "7738",
+      "name": "東聯互動",
+      "market": "上櫃",
+      "symbol": "7738.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "7736",
+      "name": "虎山",
+      "market": "上市",
+      "symbol": "7736.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "7744",
       "name": "崴寶",
       "market": "上櫃",
       "symbol": "7744.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "7750",
-      "name": "新代",
-      "market": "上市",
-      "symbol": "7750.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -2962,6 +3205,27 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "7743",
+      "name": "金利食安",
+      "market": "上櫃",
+      "symbol": "7743.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "7747",
+      "name": "昕奇雲端",
+      "market": "上櫃",
+      "symbol": "7747.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "7750",
+      "name": "新代",
+      "market": "上市",
+      "symbol": "7750.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "7751",
       "name": "竑騰",
       "market": "上櫃",
@@ -2969,45 +3233,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7770",
-      "name": "君曜",
-      "market": "上櫃",
-      "symbol": "7770.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "7757",
-      "name": "金色三麥",
-      "market": "上櫃",
-      "symbol": "7757.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "7753",
-      "name": "星亞",
-      "market": "上櫃",
-      "symbol": "7753.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "7765",
       "name": "中華資安",
       "market": "上市",
       "symbol": "7765.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "7777",
-      "name": "能率亞洲",
-      "market": "上櫃",
-      "symbol": "7777.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "7780",
-      "name": "大研生醫*",
-      "market": "上市",
-      "symbol": "7780.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3025,17 +3254,38 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7788",
-      "name": "松川精密",
+      "code": "7780",
+      "name": "大研生醫*",
       "market": "上市",
-      "symbol": "7788.TW",
+      "symbol": "7780.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7791",
-      "name": "皇家可口",
-      "market": "上市",
-      "symbol": "7791.TW",
+      "code": "7777",
+      "name": "能率亞洲",
+      "market": "上櫃",
+      "symbol": "7777.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "7757",
+      "name": "金色三麥",
+      "market": "上櫃",
+      "symbol": "7757.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "7770",
+      "name": "君曜",
+      "market": "上櫃",
+      "symbol": "7770.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "7753",
+      "name": "星亞",
+      "market": "上櫃",
+      "symbol": "7753.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3043,13 +3293,6 @@
       "name": "光速火箭",
       "market": "上櫃",
       "symbol": "7782.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "7805",
-      "name": "威聯通",
-      "market": "上櫃",
-      "symbol": "7805.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3067,6 +3310,27 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "7791",
+      "name": "皇家可口",
+      "market": "上市",
+      "symbol": "7791.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "7810",
+      "name": "捷創科技",
+      "market": "上櫃",
+      "symbol": "7810.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "7805",
+      "name": "威聯通",
+      "market": "上櫃",
+      "symbol": "7805.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "7799",
       "name": "禾榮科",
       "market": "上市",
@@ -3081,24 +3345,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "7811",
-      "name": "民盛",
-      "market": "上櫃",
-      "symbol": "7811.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8024",
-      "name": "佑華",
-      "market": "上櫃",
-      "symbol": "8024.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8011",
-      "name": "台通",
+      "code": "7788",
+      "name": "松川精密",
       "market": "上市",
-      "symbol": "8011.TW",
+      "symbol": "7788.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3109,31 +3359,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8016",
-      "name": "矽創",
-      "market": "上市",
-      "symbol": "8016.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "7810",
-      "name": "捷創科技",
+      "code": "8024",
+      "name": "佑華",
       "market": "上櫃",
-      "symbol": "7810.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8027",
-      "name": "鈦昇",
-      "market": "上櫃",
-      "symbol": "8027.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8033",
-      "name": "雷虎",
-      "market": "上市",
-      "symbol": "8033.TW",
+      "symbol": "8024.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3144,10 +3373,52 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "8016",
+      "name": "矽創",
+      "market": "上市",
+      "symbol": "8016.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8027",
+      "name": "鈦昇",
+      "market": "上櫃",
+      "symbol": "8027.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "8032",
       "name": "光菱",
       "market": "上櫃",
       "symbol": "8032.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8038",
+      "name": "長園科",
+      "market": "上櫃",
+      "symbol": "8038.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8034",
+      "name": "榮群",
+      "market": "上櫃",
+      "symbol": "8034.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8033",
+      "name": "雷虎",
+      "market": "上市",
+      "symbol": "8033.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8042",
+      "name": "金山電",
+      "market": "上櫃",
+      "symbol": "8042.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3165,24 +3436,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8042",
-      "name": "金山電",
-      "market": "上櫃",
-      "symbol": "8042.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "8043",
       "name": "蜜望實",
       "market": "上櫃",
       "symbol": "8043.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8034",
-      "name": "榮群",
-      "market": "上櫃",
-      "symbol": "8034.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3193,10 +3450,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8038",
-      "name": "長園科",
+      "code": "8046",
+      "name": "南電",
+      "market": "上市",
+      "symbol": "8046.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8047",
+      "name": "星雲",
       "market": "上櫃",
-      "symbol": "8038.TWO",
+      "symbol": "8047.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3207,10 +3471,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8046",
-      "name": "南電",
-      "market": "上市",
-      "symbol": "8046.TW",
+      "code": "8059",
+      "name": "凱碩",
+      "market": "上櫃",
+      "symbol": "8059.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3235,48 +3499,6 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8059",
-      "name": "凱碩",
-      "market": "上櫃",
-      "symbol": "8059.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8054",
-      "name": "安國",
-      "market": "上櫃",
-      "symbol": "8054.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8068",
-      "name": "全達",
-      "market": "上櫃",
-      "symbol": "8068.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8064",
-      "name": "東捷",
-      "market": "上櫃",
-      "symbol": "8064.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8047",
-      "name": "星雲",
-      "market": "上櫃",
-      "symbol": "8047.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8069",
-      "name": "元太",
-      "market": "上櫃",
-      "symbol": "8069.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "8066",
       "name": "來思達",
       "market": "上櫃",
@@ -3291,10 +3513,45 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "8054",
+      "name": "安國",
+      "market": "上櫃",
+      "symbol": "8054.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8064",
+      "name": "東捷",
+      "market": "上櫃",
+      "symbol": "8064.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8011",
+      "name": "台通",
+      "market": "上市",
+      "symbol": "8011.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "7811",
+      "name": "民盛",
+      "market": "上櫃",
+      "symbol": "7811.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "8070",
       "name": "長華*",
       "market": "上市",
       "symbol": "8070.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8068",
+      "name": "全達",
+      "market": "上櫃",
+      "symbol": "8068.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3312,17 +3569,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8081",
-      "name": "致新",
-      "market": "上市",
-      "symbol": "8081.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "8074",
       "name": "鉅橡",
       "market": "上櫃",
       "symbol": "8074.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8069",
+      "name": "元太",
+      "market": "上櫃",
+      "symbol": "8069.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3333,13 +3590,6 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8077",
-      "name": "洛碁",
-      "market": "上櫃",
-      "symbol": "8077.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "8083",
       "name": "瑞穎",
       "market": "上櫃",
@@ -3347,17 +3597,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8080",
-      "name": "泰霖",
-      "market": "上櫃",
-      "symbol": "8080.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8087",
-      "name": "麗升能源",
-      "market": "上櫃",
-      "symbol": "8087.TWO",
+      "code": "8081",
+      "name": "致新",
+      "market": "上市",
+      "symbol": "8081.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3365,41 +3608,6 @@
       "name": "巨虹",
       "market": "上櫃",
       "symbol": "8084.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8089",
-      "name": "康全電訊",
-      "market": "上櫃",
-      "symbol": "8089.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8086",
-      "name": "宏捷科",
-      "market": "上櫃",
-      "symbol": "8086.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8093",
-      "name": "保銳",
-      "market": "上櫃",
-      "symbol": "8093.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8091",
-      "name": "翔名",
-      "market": "上櫃",
-      "symbol": "8091.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8092",
-      "name": "建暐",
-      "market": "上櫃",
-      "symbol": "8092.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3417,52 +3625,52 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8101",
-      "name": "華冠",
-      "market": "上市",
-      "symbol": "8101.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8103",
-      "name": "瀚荃",
-      "market": "上市",
-      "symbol": "8103.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8097",
-      "name": "常珵",
+      "code": "8077",
+      "name": "洛碁",
       "market": "上櫃",
-      "symbol": "8097.TWO",
+      "symbol": "8077.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8099",
-      "name": "大世科",
+      "code": "8086",
+      "name": "宏捷科",
       "market": "上櫃",
-      "symbol": "8099.TWO",
+      "symbol": "8086.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8102",
-      "name": "傑霖科技",
+      "code": "8080",
+      "name": "泰霖",
       "market": "上櫃",
-      "symbol": "8102.TWO",
+      "symbol": "8080.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8104",
-      "name": "錸寶",
-      "market": "上市",
-      "symbol": "8104.TW",
+      "code": "8087",
+      "name": "麗升能源",
+      "market": "上櫃",
+      "symbol": "8087.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8105",
-      "name": "凌巨",
-      "market": "上市",
-      "symbol": "8105.TW",
+      "code": "8092",
+      "name": "建暐",
+      "market": "上櫃",
+      "symbol": "8092.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8093",
+      "name": "保銳",
+      "market": "上櫃",
+      "symbol": "8093.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8089",
+      "name": "康全電訊",
+      "market": "上櫃",
+      "symbol": "8089.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3473,6 +3681,48 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "8099",
+      "name": "大世科",
+      "market": "上櫃",
+      "symbol": "8099.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8103",
+      "name": "瀚荃",
+      "market": "上市",
+      "symbol": "8103.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8102",
+      "name": "傑霖科技",
+      "market": "上櫃",
+      "symbol": "8102.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8101",
+      "name": "華冠",
+      "market": "上市",
+      "symbol": "8101.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8091",
+      "name": "翔名",
+      "market": "上櫃",
+      "symbol": "8091.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8097",
+      "name": "常珵",
+      "market": "上櫃",
+      "symbol": "8097.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "8107",
       "name": "大億金茂",
       "market": "上櫃",
@@ -3480,38 +3730,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8111",
-      "name": "立碁",
-      "market": "上櫃",
-      "symbol": "8111.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8121",
-      "name": "越峰",
-      "market": "上櫃",
-      "symbol": "8121.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8112",
-      "name": "至上",
+      "code": "8105",
+      "name": "凌巨",
       "market": "上市",
-      "symbol": "8112.TW",
+      "symbol": "8105.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8147",
-      "name": "正淩",
+      "code": "8109",
+      "name": "博大",
       "market": "上櫃",
-      "symbol": "8147.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8131",
-      "name": "福懋科",
-      "market": "上市",
-      "symbol": "8131.TW",
+      "symbol": "8109.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3522,6 +3751,20 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "8131",
+      "name": "福懋科",
+      "market": "上市",
+      "symbol": "8131.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8111",
+      "name": "立碁",
+      "market": "上櫃",
+      "symbol": "8111.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "8114",
       "name": "振樺電",
       "market": "上市",
@@ -3529,10 +3772,31 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8109",
-      "name": "博大",
+      "code": "8112",
+      "name": "至上",
+      "market": "上市",
+      "symbol": "8112.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8121",
+      "name": "越峰",
       "market": "上櫃",
-      "symbol": "8109.TWO",
+      "symbol": "8121.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8147",
+      "name": "正淩",
+      "market": "上櫃",
+      "symbol": "8147.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8104",
+      "name": "錸寶",
+      "market": "上市",
+      "symbol": "8104.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3557,17 +3821,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8176",
-      "name": "智捷",
-      "market": "上櫃",
-      "symbol": "8176.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8201",
-      "name": "無敵",
+      "code": "8163",
+      "name": "達方",
       "market": "上市",
-      "symbol": "8201.TW",
+      "symbol": "8163.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3578,6 +3835,13 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "8176",
+      "name": "智捷",
+      "market": "上櫃",
+      "symbol": "8176.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "8182",
       "name": "加高",
       "market": "上櫃",
@@ -3585,10 +3849,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8163",
-      "name": "達方",
+      "code": "8201",
+      "name": "無敵",
       "market": "上市",
-      "symbol": "8163.TW",
+      "symbol": "8201.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8227",
+      "name": "巨有科技",
+      "market": "上櫃",
+      "symbol": "8227.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3606,17 +3877,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8222",
-      "name": "寶一",
-      "market": "上市",
-      "symbol": "8222.TW",
+      "code": "8234",
+      "name": "新漢",
+      "market": "上櫃",
+      "symbol": "8234.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8272",
-      "name": "全景軟體",
-      "market": "上櫃",
-      "symbol": "8272.TWO",
+      "code": "8249",
+      "name": "菱光",
+      "market": "上市",
+      "symbol": "8249.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3627,6 +3898,13 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
+      "code": "8255",
+      "name": "朋程",
+      "market": "上櫃",
+      "symbol": "8255.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
       "code": "8261",
       "name": "富鼎",
       "market": "上市",
@@ -3634,17 +3912,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8271",
-      "name": "宇瞻",
+      "code": "8222",
+      "name": "寶一",
       "market": "上市",
-      "symbol": "8271.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8234",
-      "name": "新漢",
-      "market": "上櫃",
-      "symbol": "8234.TWO",
+      "symbol": "8222.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3655,24 +3926,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8227",
-      "name": "巨有科技",
-      "market": "上櫃",
-      "symbol": "8227.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8255",
-      "name": "朋程",
-      "market": "上櫃",
-      "symbol": "8255.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8249",
-      "name": "菱光",
+      "code": "8271",
+      "name": "宇瞻",
       "market": "上市",
-      "symbol": "8249.TW",
+      "symbol": "8271.TW",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8272",
+      "name": "全景軟體",
+      "market": "上櫃",
+      "symbol": "8272.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3690,24 +3954,17 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8284",
-      "name": "三竹",
-      "market": "上櫃",
-      "symbol": "8284.TWO",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
-      "code": "8341",
-      "name": "日友",
-      "market": "上市",
-      "symbol": "8341.TW",
-      "reason": "Too Many Requests. Rate limited. Try after a while."
-    },
-    {
       "code": "8289",
       "name": "泰藝",
       "market": "上櫃",
       "symbol": "8289.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8284",
+      "name": "三竹",
+      "market": "上櫃",
+      "symbol": "8284.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3732,10 +3989,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8349",
-      "name": "恒耀",
-      "market": "上櫃",
-      "symbol": "8349.TWO",
+      "code": "8341",
+      "name": "日友",
+      "market": "上市",
+      "symbol": "8341.TW",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3753,10 +4010,10 @@
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
-      "code": "8374",
-      "name": "羅昇",
-      "market": "上市",
-      "symbol": "8374.TW",
+      "code": "8358",
+      "name": "金居",
+      "market": "上櫃",
+      "symbol": "8358.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     },
     {
@@ -3764,6 +4021,13 @@
       "name": "冠好",
       "market": "上櫃",
       "symbol": "8354.TWO",
+      "reason": "Too Many Requests. Rate limited. Try after a while."
+    },
+    {
+      "code": "8390",
+      "name": "金益鼎",
+      "market": "上櫃",
+      "symbol": "8390.TWO",
       "reason": "Too Many Requests. Rate limited. Try after a while."
     }
   ]
